@@ -1,9 +1,18 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
+import { useDispatch, useSelector } from "react-redux";
 import ChatMessage from "./ChatMessage";
 import ChatInput from "./ChatInput";
-import { streamChatResponse, Message, ChatRequestBody } from "@/lib/streamingApi";
+import { streamChatResponse, ChatRequestBody } from "@/lib/streamingApi";
+import {
+  addMessage,
+  updateLastMessage,
+  setLoading,
+  setError,
+} from "@/store/slices/chatSlice";
+import { RootState } from "@/store";
+import type { Message } from "@/store/slices/chatSlice";
 
 interface ChatContainerProps {
   apiUrl: string;
@@ -11,9 +20,11 @@ interface ChatContainerProps {
 }
 
 export default function ChatContainer({ apiUrl, model }: ChatContainerProps) {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const dispatch = useDispatch();
+  const messages = useSelector((state: RootState) => state.chat.messages);
+  const isLoading = useSelector((state: RootState) => state.chat.isLoading);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -23,10 +34,14 @@ export default function ChatContainer({ apiUrl, model }: ChatContainerProps) {
   const handleSendMessage = async (userMessage: string) => {
     // Add user message to chat
     const newUserMessage: Message = { role: "user", content: userMessage };
-    setMessages((prev) => [...prev, newUserMessage]);
-    setIsLoading(true);
+    dispatch(addMessage(newUserMessage));
+    dispatch(setLoading(true));
+    dispatch(setError(null));
 
     try {
+      // Add assistant placeholder message
+      dispatch(addMessage({ role: "assistant", content: "" }));
+
       // Prepare request body
       const requestBody: ChatRequestBody = {
         model,
@@ -39,39 +54,53 @@ export default function ChatContainer({ apiUrl, model }: ChatContainerProps) {
 
       for await (const chunk of streamChatResponse(apiUrl, requestBody)) {
         assistantResponse += chunk;
-
-        // Update assistant message in real-time
-        setMessages((prev) => {
-          const updated = [...prev];
-          if (updated[updated.length - 1]?.role === "assistant") {
-            updated[updated.length - 1].content = assistantResponse;
-          } else {
-            updated.push({ role: "assistant", content: assistantResponse });
-          }
-          return updated;
-        });
+        dispatch(updateLastMessage(assistantResponse));
       }
     } catch (error) {
       console.error("Error:", error);
-      const errorMessage: Message = {
-        role: "assistant",
-        content: `Error: ${error instanceof Error ? error.message : "Unknown error occurred"}`,
-      };
-      setMessages((prev) => [...prev, errorMessage]);
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error occurred";
+      dispatch(setError(errorMessage));
+      dispatch(
+        updateLastMessage(`⚠️ Error: ${errorMessage}`)
+      );
     } finally {
-      setIsLoading(false);
+      dispatch(setLoading(false));
     }
   };
 
   return (
-    <div className="flex flex-col h-full max-w-2xl mx-auto w-full">
+    <div className="flex flex-col h-full max-w-5xl mx-auto w-full">
       {/* Messages Container */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-white dark:bg-gray-900">
+      <div
+        ref={messagesContainerRef}
+        className="flex-1 overflow-y-auto p-6 space-y-4 flex flex-col"
+      >
         {messages.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-gray-500 dark:text-gray-400">
-            <p className="text-center">
-              No messages yet. Start a conversation!
-            </p>
+          <div className="flex items-center justify-center h-full">
+            <div className="text-center">
+              <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-gradient-to-br from-blue-100 to-purple-100 dark:from-blue-900 dark:to-purple-900 flex items-center justify-center">
+                <svg
+                  className="w-8 h-8 text-blue-600 dark:text-blue-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+                  />
+                </svg>
+              </div>
+              <p className="text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Start a Conversation
+              </p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Send a message to begin chatting with the AI assistant
+              </p>
+            </div>
           </div>
         ) : (
           <>
@@ -88,7 +117,7 @@ export default function ChatContainer({ apiUrl, model }: ChatContainerProps) {
       </div>
 
       {/* Input Container */}
-      <div className="border-t border-gray-300 dark:border-gray-700 p-6 bg-white dark:bg-gray-900">
+      <div className="border-t border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 backdrop-blur-sm bg-opacity-90 dark:bg-opacity-90">
         <ChatInput onSendMessage={handleSendMessage} isLoading={isLoading} />
       </div>
     </div>
