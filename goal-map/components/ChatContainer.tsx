@@ -79,7 +79,7 @@ export default function ChatContainer({ apiUrl, model }: ChatContainerProps) {
         {messages.length === 0 ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
-              <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-gradient-to-br from-blue-100 to-purple-100 dark:from-blue-900 dark:to-purple-900 flex items-center justify-center">
+              <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center">
                 <svg
                   className="w-8 h-8 text-blue-600 dark:text-blue-400"
                   fill="none"

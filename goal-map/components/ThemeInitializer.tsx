@@ -27,8 +27,10 @@ export default function ThemeInitializer() {
     // Update DOM and localStorage when theme changes
     if (typeof window !== "undefined") {
       const htmlElement = document.documentElement;
-      htmlElement.classList.toggle("dark", theme === "dark");
+      const isDark = theme === "dark";
+      htmlElement.classList.toggle("dark", isDark);
       localStorage.setItem("theme", theme);
+      console.log("Theme changed to:", theme, "Dark class added:", isDark);
     }
   }, [theme]);
 
