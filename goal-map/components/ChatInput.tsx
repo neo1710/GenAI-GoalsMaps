@@ -16,6 +16,7 @@ export default function ChatInput({
   isLoading,
 }: ChatInputProps) {
   const [input, setInput] = useState("");
+  const theme = useSelector((state: RootState) => state.theme.mode);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,12 +35,16 @@ export default function ChatInput({
           onChange={(e) => setInput(e.target.value)}
           placeholder="Type your message..."
           disabled={isLoading}
-          className="flex-1 px-4 py-2.5 sm:py-3 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed transition-all"
+          className={`flex-1 px-4 py-2.5 sm:py-3 rounded-lg border transition-colors duration-200 focus:outline-none focus:ring-2 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed ${
+            theme === "dark"
+              ? "border-slate-700 bg-slate-800 text-white placeholder-gray-400 focus:ring-blue-400"
+              : "border-gray-300 bg-white text-gray-900 placeholder-gray-500 focus:ring-blue-500"
+          }`}
         />
         <button
           type="submit"
           disabled={isLoading || !input.trim()}
-          className="px-4 sm:px-6 py-2.5 sm:py-3 bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-700 text-white rounded-lg font-medium transition-all duration-200 shadow-sm hover:shadow-md active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2 whitespace-nowrap"
+          className="px-4 sm:px-6 py-2.5 sm:py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-all duration-200 shadow-sm hover:shadow-md active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2 whitespace-nowrap"
         >
           {isLoading ? (
             <>

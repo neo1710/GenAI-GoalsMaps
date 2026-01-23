@@ -24,6 +24,7 @@ export default function ChatContainer({ apiUrl, model }: ChatContainerProps) {
   const dispatch = useDispatch();
   const messages = useSelector((state: RootState) => state.chat.messages);
   const isLoading = useSelector((state: RootState) => state.chat.isLoading);
+  const theme = useSelector((state: RootState) => state.theme.mode);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
@@ -71,23 +72,47 @@ export default function ChatContainer({ apiUrl, model }: ChatContainerProps) {
   };
 
   return (
-    <div className="flex flex-col h-full w-full bg-white dark:bg-slate-950">
+    <div className={`flex flex-col h-full w-full transition-colors duration-200 ${
+      theme === "dark"
+        ? "bg-slate-950"
+        : "bg-white"
+    }`}>
       {/* Messages Container */}
       <div
         ref={messagesContainerRef}
-        className="flex-1 overflow-y-auto px-4 sm:px-6 lg:px-8 py-6 space-y-4 flex flex-col"
+        className={`flex-1 overflow-y-auto px-4 sm:px-6 lg:px-8 py-6 space-y-4 flex flex-col transition-colors duration-200 ${
+          theme === "dark"
+            ? "bg-slate-950"
+            : "bg-white"
+        }`}
       >
         <div className="max-w-4xl mx-auto w-full">
           {messages.length === 0 ? (
             <div className="flex items-center justify-center h-full min-h-96">
               <div className="text-center py-12">
-                <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
-                  <FiMessageCircle className="w-8 h-8 text-blue-600 dark:text-blue-400" />
+                <div className={`w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center transition-colors duration-200 ${
+                  theme === "dark"
+                    ? "bg-slate-800"
+                    : "bg-blue-100"
+                }`}>
+                  <FiMessageCircle className={`w-8 h-8 ${
+                    theme === "dark"
+                      ? "text-blue-400"
+                      : "text-blue-600"
+                  }`} />
                 </div>
-                <p className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-2">
+                <p className={`text-lg font-semibold mb-2 transition-colors duration-200 ${
+                  theme === "dark"
+                    ? "text-gray-200"
+                    : "text-gray-800"
+                }`}>
                   Start a Conversation
                 </p>
-                <p className="text-sm text-gray-500 dark:text-gray-400">
+                <p className={`text-sm transition-colors duration-200 ${
+                  theme === "dark"
+                    ? "text-gray-400"
+                    : "text-gray-600"
+                }`}>
                   Type a message to begin chatting with the AI
                 </p>
               </div>
@@ -108,7 +133,11 @@ export default function ChatContainer({ apiUrl, model }: ChatContainerProps) {
       </div>
 
       {/* Input Container */}
-      <div className="border-t border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-4 px-4 sm:px-6 lg:px-8">
+      <div className={`border-t transition-colors duration-200 py-4 px-4 sm:px-6 lg:px-8 ${
+        theme === "dark"
+          ? "border-slate-700 bg-slate-900"
+          : "border-gray-200 bg-white"
+      }`}>
         <div className="max-w-4xl mx-auto w-full">
           <ChatInput onSendMessage={handleSendMessage} isLoading={isLoading} />
         </div>

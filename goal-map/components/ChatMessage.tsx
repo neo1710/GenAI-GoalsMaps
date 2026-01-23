@@ -9,6 +9,7 @@ import Markdown from "./Markdown";
 
 export default function ChatMessage({ role, content }: ChatMessageProps) {
   const isUser = role === "user";
+  const theme = useSelector((state: RootState) => state.theme.mode);
 
   return (
     <div className={`flex w-full ${isUser ? "justify-end" : "justify-start"} mb-4 animate-in fade-in slide-in-from-bottom-2 duration-300`}>
