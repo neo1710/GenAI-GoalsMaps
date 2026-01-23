@@ -1,15 +1,21 @@
 "use client";
 
-import { useSelector } from "react-redux";
+import { useSelector, useDispatch } from "react-redux";
 import { RootState } from "@/store";
 import ChatContainer from "@/components/ChatContainer";
 import ThemeToggle from "@/components/ThemeToggle";
-import { FiMessageCircle } from "react-icons/fi";
+import { FiMessageCircle, FiTrash2 } from "react-icons/fi";
+import { clearMessages } from "@/store/slices/chatSlice";
 
 export default function ChatPage() {
+  const dispatch = useDispatch();
   const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api/chat";
   const MODEL = process.env.NEXT_PUBLIC_MODEL || "gpt-3.5-turbo";
   const theme = useSelector((state: RootState) => state.theme.mode);
+
+  const handleClearChat = () => {
+    dispatch(clearMessages());
+  };
 
   return (
     <div className={`flex h-screen flex-col transition-colors duration-200 ${
@@ -53,7 +59,20 @@ export default function ChatPage() {
               </p>
             </div>
           </div>
-          <ThemeToggle />
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleClearChat}
+              className={`p-2.5 rounded-lg transition-colors duration-200 hover:scale-110 ${
+                theme === "dark"
+                  ? "bg-slate-800 hover:bg-slate-700 text-gray-300 hover:text-red-400"
+                  : "bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-red-600"
+              }`}
+              title="Clear chat history"
+            >
+              <FiTrash2 className="w-5 h-5" />
+            </button>
+            <ThemeToggle />
+          </div>
         </div>
       </header>
 
