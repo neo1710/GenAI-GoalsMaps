@@ -1,28 +1,37 @@
+"use client";
+
 import ChatContainer from "@/components/ChatContainer";
 import ThemeToggle from "@/components/ThemeToggle";
+import { FiMessageCircle } from "react-icons/fi";
 
 export default function ChatPage() {
-  // Replace with your actual API URL
   const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api/chat";
   const MODEL = process.env.NEXT_PUBLIC_MODEL || "gpt-3.5-turbo";
 
   return (
     <div className="flex h-screen flex-col bg-white dark:bg-slate-950 text-gray-900 dark:text-gray-50">
       {/* Header */}
-      <header className="border-b border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-900 px-6 py-4 flex items-center justify-between">
-        <div className="flex-1">
-          <h1 className="text-2xl font-bold text-blue-600 dark:text-blue-400">
-            Chat Assistant
-          </h1>
-          <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-            Model: <span className="font-medium text-gray-900 dark:text-gray-200">{MODEL}</span>
-          </p>
+      <header className="border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 sm:px-6 lg:px-8 py-3">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
+              <FiMessageCircle className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+            </div>
+            <div>
+              <h1 className="text-xl sm:text-2xl font-bold text-blue-600 dark:text-blue-400">
+                Chat Assistant
+              </h1>
+              <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400">
+                {MODEL}
+              </p>
+            </div>
+          </div>
+          <ThemeToggle />
         </div>
-        <ThemeToggle />
       </header>
 
       {/* Main Chat Area */}
-      <main className="flex-1 overflow-hidden bg-white dark:bg-slate-950">
+      <main className="flex-1 overflow-hidden flex flex-col bg-white dark:bg-slate-950">
         <ChatContainer apiUrl={API_URL} model={MODEL} />
       </main>
     </div>
