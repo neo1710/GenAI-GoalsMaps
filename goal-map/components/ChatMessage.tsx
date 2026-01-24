@@ -1,13 +1,14 @@
 interface ChatMessageProps {
   role: string;
   content: string;
+  isStreaming?: boolean;
 }
 
 import { useSelector } from "react-redux";
 import { RootState } from "@/store";
 import Markdown from "./Markdown";
 
-export default function ChatMessage({ role, content }: ChatMessageProps) {
+export default function ChatMessage({ role, content, isStreaming = false }: ChatMessageProps) {
   const isUser = role === "user";
   const theme = useSelector((state: RootState) => state.theme.mode);
 
@@ -37,7 +38,7 @@ export default function ChatMessage({ role, content }: ChatMessageProps) {
             {isUser ? (
               <p>{content}</p>
             ) : (
-              <Markdown content={content} />
+              <Markdown content={content} isStreaming={isStreaming} />
             )}
           </div>
         </div>
