@@ -284,9 +284,13 @@ export default function Markdown({ content, isStreaming = false }: MarkdownProps
 
       return (
         <div className="space-y-2">
-          {/* Answer Bubble with Confidence-based Color - FIRST */}
+          {/* Answer Bubble - FIRST */}
           <div
-            className={`rounded-lg p-3 transition-colors duration-200 ${confidenceColors.bg} border ${confidenceColors.border}`}
+            className={`rounded-lg p-3 transition-colors duration-200 border ${
+              theme === "dark"
+                ? "bg-gray-800 border-gray-700"
+                : "bg-white border-gray-200"
+            }`}
           >
             <div
               className={`flex items-center gap-2 text-xs font-semibold mb-2 transition-colors duration-200 ${labelColor}`}
@@ -301,7 +305,9 @@ export default function Markdown({ content, isStreaming = false }: MarkdownProps
               </span>
             </div>
             <div
-              className={`text-sm transition-colors duration-200 ${confidenceColors.text}`}
+              className={`text-sm transition-colors duration-200 ${
+                theme === "dark" ? "text-gray-200" : "text-gray-800"
+              }`}
             >
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}

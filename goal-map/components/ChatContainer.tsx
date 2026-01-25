@@ -18,9 +18,10 @@ import { FiMessageCircle } from "react-icons/fi";
 interface ChatContainerProps {
   apiUrl: string;
   model: string;
+  agent: string;
 }
 
-export default function ChatContainer({ apiUrl, model }: ChatContainerProps) {
+export default function ChatContainer({ apiUrl, model, agent }: ChatContainerProps) {
   const dispatch = useDispatch();
   const messages = useSelector((state: RootState) => state.chat.messages);
   const isLoading = useSelector((state: RootState) => state.chat.isLoading);
@@ -49,6 +50,7 @@ export default function ChatContainer({ apiUrl, model }: ChatContainerProps) {
         model,
         stream: true,
         messages: [...messages, newUserMessage],
+        ...(agent && { agent }),
       };
 
       // Stream response and collect chunks

@@ -7,6 +7,7 @@ export interface ChatRequestBody {
   model: string;
   stream: boolean;
   messages: Message[];
+  agent?: string;
 }
 
 export async function* streamChatResponse(
