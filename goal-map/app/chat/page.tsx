@@ -73,6 +73,7 @@ export default function ChatPage() {
             >
               <option value="">Select Agent</option>
               <option value="critiqueAgent">Critique Agent</option>
+              <option value="ragAgent">RAG Agent</option>
             </select>
             <button
               onClick={handleClearChat}
