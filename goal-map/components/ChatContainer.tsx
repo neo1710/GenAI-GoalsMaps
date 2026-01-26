@@ -56,7 +56,7 @@ export default function ChatContainer({ apiUrl, model, agent }: ChatContainerPro
       // Stream response and collect chunks
       let assistantResponse = "";
 
-      for await (const chunk of streamChatResponse(apiUrl, requestBody)) {
+      for await (const chunk of streamChatResponse(`${apiUrl}/chat`, requestBody)) {
         assistantResponse += chunk;
         dispatch(updateLastMessage(assistantResponse));
       }

@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import * as mammoth from 'mammoth';
+import { uploadDataApi } from "@/lib/uploadDataApi";
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
@@ -201,6 +202,19 @@ export default function Home() {
     }
   };
 
+  const uploadChunks=async (chunks: string[])=> {
+    // Placeholder function to demonstrate where chunk upload logic would go
+    // This could involve sending chunks to a backend or storing them in a database
+    try {
+      await uploadDataApi(`${process.env.NEXT_PUBLIC_API_URL}/ragStore`, chunks);
+    } catch (error) {
+      console.error("Error uploading chunks:", error);
+    }
+
+
+    console.log("Uploading chunks:", chunks);
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-8">
       <div className="max-w-2xl mx-auto">
@@ -244,6 +258,7 @@ export default function Home() {
             >
               {loading ? 'Processing...' : 'Extract & Chunk Text'}
             </button>
+            <button disabled={!chunks.length} className="p-5 bg-green-700 hover:bg-green-600 color-gray-300" onClick={() => uploadChunks(chunks)}>Upload Chunks</button>
 
             {chunks.length > 0 && (
               <div className="bg-green-50 border border-green-200 rounded-lg p-4">
