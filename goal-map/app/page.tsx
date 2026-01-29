@@ -3,20 +3,31 @@
 import React, { useState } from "react";
 import * as mammoth from 'mammoth';
 import { uploadDataApi } from "@/lib/uploadDataApi";
+import toast, { Toaster } from 'react-hot-toast';
+import { 
+  FiUpload, 
+  FiFile, 
+  FiCheck, 
+  FiX, 
+  FiMessageSquare,
+  FiMoon,
+  FiSun,
+  FiEye,
+  FiLoader
+} from 'react-icons/fi';
+import Link from 'next/link';
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [extractedText, setExtractedText] = useState<string>('');
   const [chunks, setChunks] = useState<string[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
+  const [uploading, setUploading] = useState<boolean>(false);
   const [showModal, setShowModal] = useState<boolean>(false);
-  const [error, setError] = useState<string>('');
+  const [darkMode, setDarkMode] = useState<boolean>(true);
 
   function chunkText(text: string, minSize: number = 500, maxSize: number = 800, overlap: number = 125): string[] {
-    // Clean up excessive whitespace but preserve paragraph structure
     const cleaned = text.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
-    
-    // Split by double newlines to get paragraphs
     const paragraphs = cleaned.split(/\n\n+/).filter(p => p.trim().length > 0);
     
     const chunks: string[] = [];
@@ -26,26 +37,19 @@ export default function Home() {
       const para = paragraphs[i].trim();
       const potentialChunk = currentChunk ? currentChunk + '\n\n' + para : para;
       
-      // If adding this paragraph keeps us within maxSize, add it
       if (potentialChunk.length <= maxSize) {
         currentChunk = potentialChunk;
       } 
-      // If current chunk meets minSize, save it and start new chunk with overlap
       else if (currentChunk.length >= minSize) {
         chunks.push(currentChunk);
-        
-        // Create overlap from the end of previous chunk
         const overlapText = currentChunk.slice(-overlap);
         currentChunk = overlapText + '\n\n' + para;
       }
-      // If single paragraph exceeds maxSize, split it by sentences
       else if (para.length > maxSize) {
-        // If we have existing content, save it first
         if (currentChunk) {
           chunks.push(currentChunk);
         }
         
-        // Split long paragraph by sentences
         const sentences = para.match(/[^.!?]+[.!?]+/g) || [para];
         let sentenceChunk = '';
         
@@ -67,13 +71,11 @@ export default function Home() {
         
         currentChunk = sentenceChunk;
       }
-      // Current chunk is too small and para is too big, just add para and continue
       else {
         currentChunk = potentialChunk;
       }
     }
     
-    // Add the last chunk if it meets minimum size or is the only chunk
     if (currentChunk.trim() && (currentChunk.length >= minSize || chunks.length === 0)) {
       chunks.push(currentChunk.trim());
     }
@@ -84,10 +86,24 @@ export default function Home() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) {
+      const fileType = selectedFile.name.split('.').pop()?.toLowerCase();
+      const validTypes = ['pdf', 'docx', 'doc', 'txt'];
+      
+      if (!validTypes.includes(fileType || '')) {
+        toast.error('Invalid file type. Please select PDF, DOCX, or TXT files.');
+        return;
+      }
+
+      const maxSize = 10 * 1024 * 1024; // 10MB
+      if (selectedFile.size > maxSize) {
+        toast.error('File size exceeds 10MB limit.');
+        return;
+      }
+
       setFile(selectedFile);
-      setError('');
       setExtractedText('');
       setChunks([]);
+      toast.success(`File "${selectedFile.name}" selected successfully!`);
     }
   };
 
@@ -167,16 +183,16 @@ export default function Home() {
     });
   };
 
-  const processFile = async () => {
+  const processAndUpload = async () => {
     if (!file) {
-      setError('Please select a file first');
+      toast.error('Please select a file first');
       return;
     }
 
-    setLoading(true);
-    setError('');
+    const toastId = toast.loading('Extracting text...');
 
     try {
+      setLoading(true);
       let text = '';
       const fileType = file.name.split('.').pop()?.toLowerCase();
 
@@ -190,138 +206,353 @@ export default function Home() {
         throw new Error('Unsupported file type. Please use PDF, DOCX, or TXT files.');
       }
 
+      if (!text.trim()) {
+        throw new Error('No text content found in the file');
+      }
+
       setExtractedText(text);
+
+      toast.loading('Chunking text...', { id: toastId });
+
       const textChunks = chunkText(text);
       setChunks(textChunks);
-      setShowModal(true);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to process file';
-      setError(errorMessage);
-    } finally {
+
       setLoading(false);
+
+      toast.loading('Uploading chunks...', { id: toastId });
+
+      setUploading(true);
+      await uploadDataApi(`${process.env.NEXT_PUBLIC_API_URL}/ragStore`, textChunks);
+      setUploading(false);
+
+      toast.success(`Successfully processed and uploaded ${textChunks.length} chunks!`, {
+        id: toastId,
+        duration: 3000,
+      });
+       setFile(null);
+    } catch (err) {
+      setLoading(false);
+      setUploading(false);
+      const errorMessage = err instanceof Error ? err.message : 'Failed to process and upload file';
+      toast.error(errorMessage, { id: toastId });
     }
   };
 
-  const uploadChunks=async (chunks: string[])=> {
-    // Placeholder function to demonstrate where chunk upload logic would go
-    // This could involve sending chunks to a backend or storing them in a database
-    try {
-      await uploadDataApi(`${process.env.NEXT_PUBLIC_API_URL}/ragStore`, chunks);
-    } catch (error) {
-      console.error("Error uploading chunks:", error);
-    }
-
-
-    console.log("Uploading chunks:", chunks);
-  }
+  const toggleDarkMode = () => {
+    setDarkMode(!darkMode);
+  };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-8">
-      <div className="max-w-2xl mx-auto">
-        <div className="bg-white rounded-lg shadow-xl p-8">
-          <h1 className="text-3xl font-bold text-gray-800 mb-6">Document Chunker</h1>
+    <div className={`min-h-screen transition-colors duration-300 ${
+      darkMode 
+        ? 'bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900' 
+        : 'bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50'
+    } p-4 sm:p-8`}>
+      <Toaster 
+        position="top-right"
+        toastOptions={{
+          duration: 3000,
+          style: {
+            background: darkMode ? '#1f2937' : '#fff',
+            color: darkMode ? '#f3f4f6' : '#1f2937',
+          },
+          success: {
+            iconTheme: {
+              primary: '#10b981',
+              secondary: '#fff',
+            },
+          },
+          error: {
+            iconTheme: {
+              primary: '#ef4444',
+              secondary: '#fff',
+            },
+          },
+        }}
+      />
+
+      {/* Header */}
+      <div className="max-w-4xl mx-auto mb-6 flex justify-between items-center">
+        <Link 
+          href="/chat"
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg font-semibold transition-all duration-300 ${
+            darkMode
+              ? 'bg-indigo-600 hover:bg-indigo-700 text-white'
+              : 'bg-white hover:bg-gray-50 text-gray-800 shadow-md hover:shadow-lg'
+          }`}
+        >
+          <FiMessageSquare className="text-lg" />
+          <span>Go to Chat</span>
+        </Link>
+
+        <button
+          onClick={toggleDarkMode}
+          className={`p-3 rounded-lg transition-all duration-300 ${
+            darkMode
+              ? 'bg-gray-700 hover:bg-gray-600 text-yellow-400'
+              : 'bg-white hover:bg-gray-50 text-gray-800 shadow-md hover:shadow-lg'
+          }`}
+          aria-label="Toggle dark mode"
+        >
+          {darkMode ? <FiSun className="text-xl" /> : <FiMoon className="text-xl" />}
+        </button>
+      </div>
+
+      <div className="max-w-4xl mx-auto">
+        <div className={`rounded-2xl shadow-2xl p-6 sm:p-8 transition-colors duration-300 ${
+          darkMode ? 'bg-gray-800' : 'bg-white'
+        }`}>
+          {/* Title */}
+          <div className="mb-8">
+            <h1 className={`text-3xl sm:text-4xl font-bold mb-2 ${
+              darkMode ? 'text-white' : 'text-gray-800'
+            }`}>
+              Document Uploader for RAG Agent
+            </h1>
+            <p className={`text-sm sm:text-base ${
+              darkMode ? 'text-gray-400' : 'text-gray-600'
+            }`}>
+              Extract, chunk, and upload text from your documents for AI processing in your RAG agent.
+            </p>
+          </div>
           
           <div className="space-y-6">
+            {/* File Upload */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className={`block text-sm font-medium mb-3 ${
+                darkMode ? 'text-gray-300' : 'text-gray-700'
+              }`}>
                 Select File (PDF, DOCX, TXT)
               </label>
-              <input
-                type="file"
-                accept=".pdf,.docx,.doc,.txt"
-                onChange={handleFileChange}
-                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"
-              />
+              <div className="relative">
+                <input
+                  type="file"
+                  accept=".pdf,.docx,.doc,.txt"
+                  onChange={handleFileChange}
+                  className="hidden"
+                  id="file-upload"
+                  disabled={loading || uploading}
+                />
+                <label
+                  htmlFor="file-upload"
+                  className={`flex items-center justify-center gap-3 w-full p-6 border-2 border-dashed rounded-xl cursor-pointer transition-all duration-300 ${
+                    darkMode
+                      ? 'border-gray-600 hover:border-indigo-500 bg-gray-700 hover:bg-gray-600'
+                      : 'border-gray-300 hover:border-indigo-500 bg-gray-50 hover:bg-gray-100'
+                  } ${loading || uploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  <FiUpload className={`text-2xl ${
+                    darkMode ? 'text-indigo-400' : 'text-indigo-600'
+                  }`} />
+                  <span className={`font-medium ${
+                    darkMode ? 'text-gray-300' : 'text-gray-700'
+                  }`}>
+                    {file ? 'Change File' : 'Click to upload or drag and drop'}
+                  </span>
+                </label>
+              </div>
             </div>
 
+            {/* File Info */}
             {file && (
-              <div className="bg-gray-50 rounded-lg p-4">
-                <p className="text-sm text-gray-600">
-                  <span className="font-semibold">Selected:</span> {file.name}
-                </p>
-                <p className="text-sm text-gray-600">
-                  <span className="font-semibold">Size:</span> {(file.size / 1024).toFixed(2)} KB
-                </p>
+              <div className={`rounded-xl p-4 border transition-colors duration-300 ${
+                darkMode
+                  ? 'bg-gray-700 border-gray-600'
+                  : 'bg-gradient-to-r from-indigo-50 to-purple-50 border-indigo-200'
+              }`}>
+                <div className="flex items-start gap-3">
+                  <FiFile className={`text-2xl mt-1 ${
+                    darkMode ? 'text-indigo-400' : 'text-indigo-600'
+                  }`} />
+                  <div className="flex-1">
+                    <p className={`font-semibold mb-1 ${
+                      darkMode ? 'text-white' : 'text-gray-800'
+                    }`}>
+                      {file.name}
+                    </p>
+                    <p className={`text-sm ${
+                      darkMode ? 'text-gray-400' : 'text-gray-600'
+                    }`}>
+                      Size: {(file.size / 1024).toFixed(2)} KB
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setFile(null);
+                      setExtractedText('');
+                      setChunks([]);
+                      toast.success('File removed');
+                    }}
+                    className={`p-2 rounded-lg transition-colors ${
+                      darkMode
+                        ? 'hover:bg-gray-600 text-gray-400 hover:text-white'
+                        : 'hover:bg-white text-gray-600 hover:text-gray-800'
+                    }`}
+                    disabled={loading || uploading}
+                  >
+                    <FiX className="text-xl" />
+                  </button>
+                </div>
               </div>
             )}
 
-            {error && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                <p className="text-sm text-red-600">{error}</p>
-              </div>
-            )}
-
+            {/* Action Button */}
             <button
-              onClick={processFile}
-              disabled={!file || loading}
-              className="w-full bg-indigo-600 text-white py-3 px-6 rounded-lg font-semibold hover:bg-indigo-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+              onClick={processAndUpload}
+              disabled={!file || loading || uploading}
+              className={`flex items-center justify-center gap-2 py-4 px-6 rounded-xl font-semibold transition-all duration-300 w-full ${
+                !file || loading || uploading
+                  ? 'bg-gray-400 cursor-not-allowed'
+                  : darkMode
+                  ? 'bg-indigo-600 hover:bg-indigo-700 hover:shadow-lg hover:shadow-indigo-500/50'
+                  : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 hover:shadow-lg hover:shadow-indigo-500/50'
+              } text-white`}
             >
-              {loading ? 'Processing...' : 'Extract & Chunk Text'}
+              {loading ? (
+                <>
+                  <FiLoader className="animate-spin text-xl" />
+                  <span>Processing...</span>
+                </>
+              ) : uploading ? (
+                <>
+                  <FiLoader className="animate-spin text-xl" />
+                  <span>Uploading...</span>
+                </>
+              ) : (
+                <>
+                  <FiUpload className="text-xl" />
+                  <span>Process and Upload</span>
+                </>
+              )}
             </button>
-            <button disabled={!chunks.length} className="p-5 bg-green-700 hover:bg-green-600 color-gray-300" onClick={() => uploadChunks(chunks)}>Upload Chunks</button>
 
+            {/* Success Message */}
             {chunks.length > 0 && (
-              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                <p className="text-sm text-green-700">
-                  ✓ Successfully created {chunks.length} chunks
-                </p>
-                <button
-                  onClick={() => setShowModal(true)}
-                  className="mt-2 text-sm text-indigo-600 hover:text-indigo-800 font-medium"
-                >
-                  View Chunks →
-                </button>
+              <div className={`rounded-xl left-5 bottom-5 absolute w-[250px] p-4 border transition-colors duration-300 ${
+                darkMode
+                  ? 'bg-green-900/20 border-green-800'
+                  : 'bg-green-50 border-green-200'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div>
+                      <p className={`font-semibold text-sm ${
+                        darkMode ? 'text-green-400' : 'text-green-700'
+                      }`}>
+                        Created {chunks.length} chunks
+                      </p>
+                      <p className={`text-sm ${
+                        darkMode ? 'text-green-500' : 'text-green-600'
+                      }`}>
+                        Total characters: {extractedText.length.toLocaleString()}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowModal(true)}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+                      darkMode
+                        ? 'bg-green-800 hover:bg-green-700 text-green-200'
+                        : 'bg-green-600 hover:bg-green-700 text-white'
+                    }`}
+                  >
+                    <FiEye />
+                    <span>View</span>
+                  </button>
+                </div>
               </div>
             )}
           </div>
         </div>
       </div>
 
+      {/* Modal */}
       {showModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col">
-            <div className="p-6 border-b border-gray-200 flex justify-between items-center">
-              <h2 className="text-2xl font-bold text-gray-800">Extracted Data & Chunks</h2>
+        <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className={`rounded-2xl shadow-2xl max-w-5xl w-full max-h-[90vh] flex flex-col transition-colors duration-300 ${
+            darkMode ? 'bg-gray-800' : 'bg-white'
+          }`}>
+            {/* Modal Header */}
+            <div className={`p-6 border-b flex justify-between items-center ${
+              darkMode ? 'border-gray-700' : 'border-gray-200'
+            }`}>
+              <h2 className={`text-2xl font-bold ${
+                darkMode ? 'text-white' : 'text-gray-800'
+              }`}>
+                Extracted Data & Chunks
+              </h2>
               <button
                 onClick={() => setShowModal(false)}
-                className="text-gray-500 hover:text-gray-700 text-2xl font-bold"
+                className={`p-2 rounded-lg transition-colors ${
+                  darkMode
+                    ? 'hover:bg-gray-700 text-gray-400 hover:text-white'
+                    : 'hover:bg-gray-100 text-gray-500 hover:text-gray-700'
+                }`}
               >
-                ×
+                <FiX className="text-2xl" />
               </button>
             </div>
 
+            {/* Modal Content */}
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              {/* Extracted Text Preview */}
               <div>
-                <h3 className="text-lg font-semibold text-gray-700 mb-3">
+                <h3 className={`text-lg font-semibold mb-3 flex items-center gap-2 ${
+                  darkMode ? 'text-gray-200' : 'text-gray-700'
+                }`}>
+                  <FiFile className="text-xl" />
                   Extracted Text Preview
                 </h3>
-                <div className="bg-gray-50 rounded-lg p-4 max-h-48 overflow-y-auto">
-                  <p className="text-sm text-gray-600 whitespace-pre-wrap">
+                <div className={`rounded-xl p-4 max-h-48 overflow-y-auto transition-colors duration-300 ${
+                  darkMode ? 'bg-gray-700' : 'bg-gray-50'
+                }`}>
+                  <p className={`text-sm whitespace-pre-wrap ${
+                    darkMode ? 'text-gray-300' : 'text-gray-600'
+                  }`}>
                     {extractedText.substring(0, 500)}
                     {extractedText.length > 500 && '...'}
                   </p>
                 </div>
-                <p className="text-xs text-gray-500 mt-2">
-                  Total characters: {extractedText.length}
+                <p className={`text-xs mt-2 ${
+                  darkMode ? 'text-gray-500' : 'text-gray-500'
+                }`}>
+                  Total characters: {extractedText.length.toLocaleString()}
                 </p>
               </div>
 
+              {/* Chunks */}
               <div>
-                <h3 className="text-lg font-semibold text-gray-700 mb-3">
+                <h3 className={`text-lg font-semibold mb-3 flex items-center gap-2 ${
+                  darkMode ? 'text-gray-200' : 'text-gray-700'
+                }`}>
+                  <FiCheck className="text-xl" />
                   Chunks ({chunks.length})
                 </h3>
                 <div className="space-y-3">
                   {chunks.map((chunk, index) => (
-                    <div key={index} className="bg-indigo-50 rounded-lg p-4 border border-indigo-100">
+                    <div 
+                      key={index} 
+                      className={`rounded-xl p-4 border transition-colors duration-300 ${
+                        darkMode
+                          ? 'bg-gray-700 border-gray-600'
+                          : 'bg-gradient-to-r from-indigo-50 to-purple-50 border-indigo-100'
+                      }`}
+                    >
                       <div className="flex justify-between items-center mb-2">
-                        <span className="text-sm font-semibold text-indigo-700">
+                        <span className={`text-sm font-semibold ${
+                          darkMode ? 'text-indigo-400' : 'text-indigo-700'
+                        }`}>
                           Chunk {index + 1}
                         </span>
-                        <span className="text-xs text-gray-500">
+                        <span className={`text-xs px-2 py-1 rounded-md ${
+                          darkMode ? 'bg-gray-600 text-gray-300' : 'bg-white text-gray-600'
+                        }`}>
                           {chunk.length} chars
                         </span>
                       </div>
-                      <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                      <p className={`text-sm whitespace-pre-wrap ${
+                        darkMode ? 'text-gray-300' : 'text-gray-700'
+                      }`}>
                         {chunk}
                       </p>
                     </div>
@@ -330,10 +561,17 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="p-6 border-t border-gray-200">
+            {/* Modal Footer */}
+            <div className={`p-6 border-t ${
+              darkMode ? 'border-gray-700' : 'border-gray-200'
+            }`}>
               <button
                 onClick={() => setShowModal(false)}
-                className="w-full bg-gray-200 text-gray-800 py-2 px-4 rounded-lg font-semibold hover:bg-gray-300 transition-colors"
+                className={`w-full py-3 px-4 rounded-xl font-semibold transition-colors ${
+                  darkMode
+                    ? 'bg-gray-700 hover:bg-gray-600 text-white'
+                    : 'bg-gray-200 hover:bg-gray-300 text-gray-800'
+                }`}
               >
                 Close
               </button>
