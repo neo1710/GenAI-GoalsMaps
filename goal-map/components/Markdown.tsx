@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useRef, useEffect } from "react";
 import { useSelector } from "react-redux";
 import { RootState } from "@/store";
 import ReactMarkdown from "react-markdown";
@@ -8,6 +8,7 @@ import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { IoIosArrowDropdownCircle, IoIosArrowDropupCircle } from "react-icons/io";
+import MultiTableExporter from "./ChatUtils/TableExporterExcel";
 
 interface MarkdownProps {
   content: string;
@@ -17,6 +18,8 @@ interface MarkdownProps {
 export default function Markdown({ content, isStreaming = false }: MarkdownProps) {
   const theme = useSelector((state: RootState) => state.theme.mode);
   const [showReasoning, setShowReasoning] = useState(false);
+  const [tableRefs, setTableRefs] = useState<(HTMLTableElement | null)[]>([]);
+  const tableRefsMap = useRef<Map<number, HTMLTableElement | null>>(new Map());
 
   // Parse content to check for structured sections
   const parsedContent = useMemo(() => {
@@ -59,6 +62,12 @@ export default function Markdown({ content, isStreaming = false }: MarkdownProps
       hasStructure: false,
       content: content,
     };
+  }, [content]);
+
+  // Effect to collect table refs after render
+  useEffect(() => {
+    const refs = Array.from(tableRefsMap.current.values());
+    setTableRefs(refs);
   }, [content]);
 
   // Helper function to get confidence color scheme
@@ -115,6 +124,10 @@ export default function Markdown({ content, isStreaming = false }: MarkdownProps
       </span>
     </div>
   );
+
+  // Counter for table refs
+  let tableCounter = 0;
+
   const markdownComponents = {
     // Headings
     h1: ({ children }: any) => (
@@ -217,15 +230,23 @@ export default function Markdown({ content, isStreaming = false }: MarkdownProps
     // Horizontal rule
     hr: () => <hr className={`my-2 transition-colors duration-200 ${theme === "dark" ? "border-gray-600" : "border-gray-300"
       }`} />,
-    // Tables
-    table: ({ children }: any) => (
-      <table className={`border-collapse border my-2 w-full text-sm transition-colors duration-200 ${theme === "dark"
-          ? "border-gray-600"
-          : "border-gray-300"
-        }`}>
-        {children}
-      </table>
-    ),
+    // Tables - Modified to capture refs
+    table: ({ children }: any) => {
+      const currentTableIndex = tableCounter++;
+      return (
+        <table
+          ref={(el) => {
+            tableRefsMap.current.set(currentTableIndex, el);
+          }}
+          className={`border-collapse border my-2 w-full text-sm transition-colors duration-200 ${theme === "dark"
+              ? "border-gray-600"
+              : "border-gray-300"
+            }`}
+        >
+          {children}
+        </table>
+      );
+    },
     thead: ({ children }: any) => (
       <thead className={`transition-colors duration-200 ${theme === "dark" ? "bg-gray-800" : "bg-gray-100"
         }`}>{children}</thead>
@@ -265,6 +286,13 @@ export default function Markdown({ content, isStreaming = false }: MarkdownProps
 
       return (
         <div className="space-y-2">
+          {/* MultiTableExporter - Shows only if 2+ tables exist */}
+          <MultiTableExporter
+            tableRefs={tableRefs}
+            contextContent={content}
+            className="mb-2"
+          />
+
           {/* Answer Bubble - FIRST */}
           <div
             className={`rounded-lg p-3 transition-colors duration-200 border ${theme === "dark"
@@ -355,6 +383,13 @@ export default function Markdown({ content, isStreaming = false }: MarkdownProps
     if (parsedContent.type === "legacy") {
       return (
         <div className="space-y-3">
+          {/* MultiTableExporter - Shows only if 2+ tables exist */}
+          <MultiTableExporter
+            tableRefs={tableRefs}
+            contextContent={content}
+            className="mb-2"
+          />
+
           {/* Thought Bubble */}
           <div
             className={`rounded-lg p-3 transition-colors duration-200 ${theme === "dark"
@@ -413,11 +448,20 @@ export default function Markdown({ content, isStreaming = false }: MarkdownProps
 
   // Default: render content as usual
   return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={markdownComponents}
-    >
-      {content}
-    </ReactMarkdown>
+    <div>
+      {/* MultiTableExporter - Shows only if 2+ tables exist */}
+      <MultiTableExporter
+        tableRefs={tableRefs}
+        contextContent={content}
+        className="mb-2"
+      />
+
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={markdownComponents}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
   );
 }
