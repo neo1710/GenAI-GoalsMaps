@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import ChatMessage from "./ChatMessage";
 import ChatInput from "./ChatInput";
 import { streamChatResponse, ChatRequestBody } from "@/lib/streamingApi";
 import {
   addMessage,
-  updateLastMessage,
   setLoading,
   setError,
 } from "@/store/slices/chatSlice";
@@ -28,50 +27,72 @@ export default function ChatContainer({ apiUrl, model, agent }: ChatContainerPro
   const theme = useSelector((state: RootState) => state.theme.mode);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  
+  // Local state for streaming message
+  const [streamingMessage, setStreamingMessage] = useState<string>("");
+  const [isStreaming, setIsStreaming] = useState(false);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, streamingMessage]);
 
-  const handleSendMessage = async (userMessage: string) => {
-    // Add user message to chat
+  const handleSendMessage = useCallback(async (userMessage: string) => {
+    if (isStreaming) return;
+
+    // Capture current messages
+    const currentMessages = [...messages];
+    
+    // Add user message to Redux
     const newUserMessage: Message = { role: "user", content: userMessage };
     dispatch(addMessage(newUserMessage));
     dispatch(setLoading(true));
     dispatch(setError(null));
+    
+    setIsStreaming(true);
+    setStreamingMessage("");
 
     try {
-      // Add assistant placeholder message
-      dispatch(addMessage({ role: "assistant", content: "" }));
-
       // Prepare request body
       const requestBody: ChatRequestBody = {
         model,
         stream: true,
-        messages: [...messages, newUserMessage],
+        messages: [...currentMessages, newUserMessage],
         ...(agent && { agent }),
       };
 
-      // Stream response and collect chunks
+      // Stream response using local state
       let assistantResponse = "";
 
       for await (const chunk of streamChatResponse(`${apiUrl}/chat`, requestBody)) {
         assistantResponse += chunk;
-        dispatch(updateLastMessage(assistantResponse));
+        setStreamingMessage(assistantResponse);
       }
+
+      // Only add to Redux when complete
+      dispatch(addMessage({ role: "assistant", content: assistantResponse }));
+      
     } catch (error) {
       console.error("Error:", error);
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error occurred";
       dispatch(setError(errorMessage));
-      dispatch(
-        updateLastMessage(`⚠️ Error: ${errorMessage}`)
-      );
+      dispatch(addMessage({ 
+        role: "assistant", 
+        content: `⚠️ Error: ${errorMessage}` 
+      }));
     } finally {
       dispatch(setLoading(false));
+      setIsStreaming(false);
+      setStreamingMessage("");
     }
-  };
+  }, [messages, isStreaming, dispatch, apiUrl, model, agent]);
+
+  // Combine messages with streaming message for display
+  const displayMessages = [...messages];
+  if (isStreaming && streamingMessage) {
+    displayMessages.push({ role: "assistant", content: streamingMessage });
+  }
 
   return (
     <div className={`flex flex-col h-full w-full transition-colors duration-200 ${
@@ -89,7 +110,7 @@ export default function ChatContainer({ apiUrl, model, agent }: ChatContainerPro
         }`}
       >
         <div className="max-w-4xl mx-auto w-full">
-          {messages.length === 0 ? (
+          {displayMessages.length === 0 ? (
             <div className="flex items-center justify-center h-full min-h-96">
               <div className="text-center py-12">
                 <div className={`w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center transition-colors duration-200 ${
@@ -121,7 +142,7 @@ export default function ChatContainer({ apiUrl, model, agent }: ChatContainerPro
             </div>
           ) : (
             <>
-              {messages.map((msg, index) => (
+              {displayMessages.map((msg, index) => (
                 <ChatMessage
                   key={index}
                   role={msg.role}

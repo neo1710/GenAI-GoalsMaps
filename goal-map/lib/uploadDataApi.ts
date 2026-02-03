@@ -1,13 +1,13 @@
 
 
-export const uploadDataApi = async (apiUrl: string, chunks: string[]) => {
+export const uploadDataApi = async (apiUrl: string, chunks: string) => {
   try {
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(chunks),
+      body: JSON.stringify({doc:chunks}),
     });
 
     if (!response.ok) {

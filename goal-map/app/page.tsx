@@ -222,7 +222,7 @@ export default function Home() {
       toast.loading('Uploading chunks...', { id: toastId });
 
       setUploading(true);
-      await uploadDataApi(`${process.env.NEXT_PUBLIC_API_URL}/ragStore`, textChunks);
+      await uploadDataApi(`${process.env.NEXT_PUBLIC_API_URL}/ragStore`, text);
       setUploading(false);
 
       toast.success(`Successfully processed and uploaded ${textChunks.length} chunks!`, {
