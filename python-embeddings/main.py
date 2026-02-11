@@ -51,5 +51,12 @@ def search(query: str, top_k: int = 3):
         top_k
     )
 
-    results = [documents[i] for i in indices[0]]
+    # Handle empty results and out-of-bounds indices
+    if len(indices) == 0 or len(indices[0]) == 0:
+        return {"results": []}
+    
+    # Filter out invalid indices (in case index returns -1 for no match)
+    valid_indices = [i for i in indices[0] if 0 <= i < len(documents)]
+    
+    results = [documents[i] for i in valid_indices]
     return {"results": results}
