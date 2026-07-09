@@ -15,6 +15,136 @@ interface MarkdownProps {
   isStreaming?: boolean;
 }
 
+const stringifyMessageValue = (value: unknown): string => {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(stringifyMessageValue).filter(Boolean).join("\n\n");
+  }
+
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const preferredText =
+      record.answer ??
+      record.final_answer ??
+      record.finalAnswer ??
+      record.response ??
+      record.content ??
+      record.message ??
+      record.text ??
+      record.output;
+
+    if (preferredText !== undefined) {
+      return stringifyMessageValue(preferredText);
+    }
+
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
+  }
+
+  return String(value);
+};
+
+const getFirstTextValue = (
+  record: Record<string, unknown>,
+  keys: string[]
+): string => {
+  for (const key of keys) {
+    const value = stringifyMessageValue(record[key]).trim();
+    if (value) {
+      return value;
+    }
+  }
+
+  return "";
+};
+
+const humanizeKey = (key: string): string =>
+  key
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+
+const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const parseJsonCandidates = (content: string): unknown | null => {
+  const trimmed = content.trim();
+  const unfenced = trimmed
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+
+  try {
+    return JSON.parse(unfenced);
+  } catch {
+    // Continue with balanced-object extraction below.
+  }
+
+  const candidates: unknown[] = [];
+  let start = -1;
+  let depth = 0;
+  let quote: string | null = null;
+  let escaped = false;
+
+  for (let index = 0; index < content.length; index += 1) {
+    const char = content[index];
+
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+
+    if (char === "{" || char === "[") {
+      if (depth === 0) {
+        start = index;
+      }
+      depth += 1;
+    } else if (char === "}" || char === "]") {
+      depth -= 1;
+
+      if (depth === 0 && start >= 0) {
+        try {
+          candidates.push(JSON.parse(content.slice(start, index + 1)));
+        } catch {
+          // Ignore malformed snippets and keep looking for displayable JSON.
+        }
+        start = -1;
+      }
+    }
+  }
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  return candidates.length === 1 ? candidates[0] : candidates;
+};
+
 export default function Markdown({ content, isStreaming = false }: MarkdownProps) {
   const theme = useSelector((state: RootState) => state.theme.mode);
   const [showReasoning, setShowReasoning] = useState(false);
@@ -24,37 +154,63 @@ export default function Markdown({ content, isStreaming = false }: MarkdownProps
   // Parse content to check for structured sections
   const parsedContent = useMemo(() => {
     // Try to parse JSON-like structure (reasoning, answer, confidence)
-    try {
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        if (parsed.reasoning && parsed.answer && parsed.confidence) {
+    const parsedJson = parseJsonCandidates(content);
+    if (parsedJson !== null) {
+      const jsonItems = Array.isArray(parsedJson) ? parsedJson : [parsedJson];
+      const firstRecord = jsonItems.find(isPlainRecord);
+
+      if (firstRecord) {
+        const answer = getFirstTextValue(firstRecord, [
+          "answer",
+          "final_answer",
+          "finalAnswer",
+          "response",
+          "content",
+          "message",
+          "text",
+          "output",
+        ]);
+        const reasoning = getFirstTextValue(firstRecord, [
+          "reasoning",
+          "thoughts",
+          "thought",
+          "explanation",
+          "rationale",
+        ]);
+        const confidence = stringifyMessageValue(firstRecord.confidence).trim();
+
+        if (answer) {
           return {
             hasStructure: true,
             type: "new",
-            reasoning: parsed.reasoning,
-            answer: parsed.answer,
-            confidence: parsed.confidence.toLowerCase(),
+            reasoning,
+            answer,
+            confidence: (confidence || "medium").toLowerCase(),
           };
         }
       }
-    } catch (e) {
-      // Continue to next parsing method
+
+      return {
+        hasStructure: true,
+        type: "json",
+        data: parsedJson,
+      };
     }
 
     // Legacy: Parse content to check for thought: and answer: sections
-    const thoughtRegex = /Thoughts:\s*([\s\S]*?)(?=Answer:|$)/i;
-    const answerRegex = /Answer:\s*([\s\S]*?)$/i;
+    const thoughtRegex = /(?:^|\n)\s*(?:#{1,6}\s*)?(?:Thoughts?|Reasoning|Rationale|Explanation):\s*([\s\S]*?)(?=(?:^|\n)\s*(?:#{1,6}\s*)?(?:Answer|Final Answer|Response):|$)/i;
+    const answerRegex = /(?:^|\n)\s*(?:#{1,6}\s*)?(?:Answer|Final Answer|Response):\s*([\s\S]*?)$/i;
 
     const thoughtMatch = content.match(thoughtRegex);
     const answerMatch = content.match(answerRegex);
+    const answer = answerMatch?.[1]?.trim() ?? "";
 
-    if (thoughtMatch && answerMatch) {
+    if (answer) {
       return {
         hasStructure: true,
         type: "legacy",
-        thought: thoughtMatch[1].trim(),
-        answer: answerMatch[1].trim(),
+        thought: thoughtMatch?.[1]?.trim() ?? "",
+        answer,
       };
     }
 
@@ -276,13 +432,95 @@ export default function Markdown({ content, isStreaming = false }: MarkdownProps
     ),
   };
 
+  const renderJsonValue = (value: unknown, depth = 0): React.ReactNode => {
+    if (value === null || value === undefined) {
+      return <span className={theme === "dark" ? "text-gray-400" : "text-gray-500"}>Not provided</span>;
+    }
+
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      return (
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={markdownComponents}
+        >
+          {String(value)}
+        </ReactMarkdown>
+      );
+    }
+
+    if (Array.isArray(value)) {
+      if (value.length === 0) {
+        return <span className={theme === "dark" ? "text-gray-400" : "text-gray-500"}>None</span>;
+      }
+
+      const hasObjectItems = value.some((item) => isPlainRecord(item) || Array.isArray(item));
+
+      if (hasObjectItems) {
+        return (
+          <div className="space-y-2">
+            {value.map((item, index) => (
+              <div
+                key={index}
+                className={`rounded-md border p-2 ${theme === "dark"
+                    ? "border-gray-700 bg-gray-900/40"
+                    : "border-gray-200 bg-gray-50"
+                  }`}
+              >
+                {renderJsonValue(item, depth + 1)}
+              </div>
+            ))}
+          </div>
+        );
+      }
+
+      return (
+        <ul className={`list-disc list-inside space-y-1 ${theme === "dark" ? "text-gray-200" : "text-gray-800"}`}>
+          {value.map((item, index) => (
+            <li key={index}>{stringifyMessageValue(item)}</li>
+          ))}
+        </ul>
+      );
+    }
+
+    if (isPlainRecord(value)) {
+      const entries = Object.entries(value).filter(([, entryValue]) => {
+        const text = stringifyMessageValue(entryValue).trim();
+        return text.length > 0 || Array.isArray(entryValue) || isPlainRecord(entryValue);
+      });
+
+      if (entries.length === 0) {
+        return <span className={theme === "dark" ? "text-gray-400" : "text-gray-500"}>No details</span>;
+      }
+
+      return (
+        <div className={depth === 0 ? "space-y-3" : "space-y-2"}>
+          {entries.map(([key, entryValue]) => (
+            <div key={key} className={depth === 0 ? "" : "space-y-1"}>
+              <div className={`text-xs font-semibold uppercase tracking-wide ${theme === "dark" ? "text-gray-400" : "text-gray-500"}`}>
+                {humanizeKey(key)}
+              </div>
+              <div className={`${theme === "dark" ? "text-gray-100" : "text-gray-900"}`}>
+                {renderJsonValue(entryValue, depth + 1)}
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    return <span>{String(value)}</span>;
+  };
+
   // If content has structured sections, render as separate bubbles
   if (parsedContent.hasStructure) {
     // New structure with reasoning, answer, and confidence
     if (parsedContent.type === "new") {
-      const confidenceColors = getConfidenceColors(parsedContent.confidence);
-      const labelColor = getConfidenceLabelColor(parsedContent.confidence);
+      const confidence = parsedContent.confidence || "medium";
+      const confidenceColors = getConfidenceColors(confidence);
+      const labelColor = getConfidenceLabelColor(confidence);
       const hasReasoning = parsedContent.reasoning && parsedContent.reasoning.trim().length > 0;
+      const answer = parsedContent.answer || "";
+      const answerJson = parseJsonCandidates(answer);
 
       return (
         <div className="space-y-2">
@@ -307,7 +545,7 @@ export default function Markdown({ content, isStreaming = false }: MarkdownProps
               <span>
                 Answer (Confidence:{" "}
                 <span className="capitalize font-bold">
-                  {parsedContent.confidence}
+                  {confidence}
                 </span>
                 )
               </span>
@@ -316,12 +554,16 @@ export default function Markdown({ content, isStreaming = false }: MarkdownProps
               className={`text-sm transition-colors duration-200 ${theme === "dark" ? "text-gray-200" : "text-gray-800"
                 }`}
             >
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                components={markdownComponents}
-              >
-                {parsedContent.answer}
-              </ReactMarkdown>
+              {answerJson !== null ? (
+                renderJsonValue(answerJson)
+              ) : (
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={markdownComponents}
+                >
+                  {answer}
+                </ReactMarkdown>
+              )}
             </div>
           </div>
 
@@ -379,8 +621,33 @@ export default function Markdown({ content, isStreaming = false }: MarkdownProps
       );
     }
 
+    if (parsedContent.type === "json") {
+      return (
+        <div className="space-y-2">
+          <MultiTableExporter
+            tableRefs={tableRefs}
+            contextContent={content}
+            className="mb-2"
+          />
+
+          <div
+            className={`rounded-lg p-3 transition-colors duration-200 border ${theme === "dark"
+                ? "bg-gray-800 border-gray-700"
+                : "bg-white border-gray-200"
+              }`}
+          >
+            {renderJsonValue(parsedContent.data)}
+          </div>
+        </div>
+      );
+    }
+
     // Legacy structure with thought and answer
     if (parsedContent.type === "legacy") {
+      const hasThought = parsedContent.thought && parsedContent.thought.trim().length > 0;
+      const answer = parsedContent.answer || "";
+      const answerJson = parseJsonCandidates(answer);
+
       return (
         <div className="space-y-3">
           {/* MultiTableExporter - Shows only if 2+ tables exist */}
@@ -391,6 +658,7 @@ export default function Markdown({ content, isStreaming = false }: MarkdownProps
           />
 
           {/* Thought Bubble */}
+          {hasThought && (
           <div
             className={`rounded-lg p-3 transition-colors duration-200 ${theme === "dark"
                 ? "bg-amber-900/30 border border-amber-700/50"
@@ -415,6 +683,7 @@ export default function Markdown({ content, isStreaming = false }: MarkdownProps
               </ReactMarkdown>
             </div>
           </div>
+          )}
 
           {/* Answer Bubble */}
           <div
@@ -433,12 +702,16 @@ export default function Markdown({ content, isStreaming = false }: MarkdownProps
               className={`text-sm transition-colors duration-200 ${theme === "dark" ? "text-green-100" : "text-green-900"
                 }`}
             >
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                components={markdownComponents}
-              >
-                {parsedContent.answer}
-              </ReactMarkdown>
+              {answerJson !== null ? (
+                renderJsonValue(answerJson)
+              ) : (
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={markdownComponents}
+                >
+                  {answer}
+                </ReactMarkdown>
+              )}
             </div>
           </div>
         </div>
