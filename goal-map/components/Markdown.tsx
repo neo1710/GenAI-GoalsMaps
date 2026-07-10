@@ -81,17 +81,76 @@ const humanizeKey = (key: string): string =>
 const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const parseJsonCandidates = (content: string): unknown | null => {
-  const trimmed = content.trim();
-  const unfenced = trimmed
+const stripJsonFence = (content: string): string =>
+  content
+    .trim()
     .replace(/^```(?:json)?\s*/i, "")
     .replace(/\s*```$/i, "")
     .trim();
 
-  try {
-    return JSON.parse(unfenced);
-  } catch {
-    // Continue with balanced-object extraction below.
+const completeJsonLikeText = (content: string): string => {
+  const closers: string[] = [];
+  let quote: string | null = null;
+  let escaped = false;
+  let result = content.trim();
+
+  for (const char of result) {
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+    } else if (char === "{") {
+      closers.push("}");
+    } else if (char === "[") {
+      closers.push("]");
+    } else if ((char === "}" || char === "]") && closers[closers.length - 1] === char) {
+      closers.pop();
+    }
+  }
+
+  if (quote) {
+    result += quote;
+  }
+
+  result += closers.reverse().join("");
+
+  return result
+    .replace(/:\s*(-?\d+(?:\.\d+)?)\s+(\([^,\n}\]]+\))/g, ': "$1 $2"')
+    .replace(/,?\s*["'][^"']+["']\s*:\s*(?=[}\]])/g, "")
+    .replace(/,\s*([}\]])/g, "$1");
+};
+
+const parseLooseJsonLike = (content: string): unknown | null => {
+  const unfenced = stripJsonFence(content);
+  const candidates = [
+    unfenced,
+    completeJsonLikeText(unfenced),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // Try the next more-forgiving candidate.
+    }
+  }
+
+  return null;
+};
+
+const parseJsonCandidates = (content: string): unknown | null => {
+  const parsed = parseLooseJsonLike(content);
+  if (parsed !== null) {
+    return parsed;
   }
 
   const candidates: unknown[] = [];
@@ -128,10 +187,9 @@ const parseJsonCandidates = (content: string): unknown | null => {
       depth -= 1;
 
       if (depth === 0 && start >= 0) {
-        try {
-          candidates.push(JSON.parse(content.slice(start, index + 1)));
-        } catch {
-          // Ignore malformed snippets and keep looking for displayable JSON.
+        const parsedCandidate = parseLooseJsonLike(content.slice(start, index + 1));
+        if (parsedCandidate !== null) {
+          candidates.push(parsedCandidate);
         }
         start = -1;
       }
@@ -143,6 +201,266 @@ const parseJsonCandidates = (content: string): unknown | null => {
   }
 
   return candidates.length === 1 ? candidates[0] : candidates;
+};
+
+const findFieldValueStart = (content: string, fieldName: string): number => {
+  const fieldRegex = new RegExp(`["']?${fieldName}["']?\\s*:`, "i");
+  const match = fieldRegex.exec(content);
+  if (!match) {
+    return -1;
+  }
+
+  return match.index + match[0].length;
+};
+
+const extractLooseFieldValue = (content: string, fieldName: string): string => {
+  const valueStart = findFieldValueStart(content, fieldName);
+  if (valueStart < 0) {
+    return "";
+  }
+
+  let index = valueStart;
+  while (/\s/.test(content[index] ?? "")) {
+    index += 1;
+  }
+
+  const startChar = content[index];
+
+  if (startChar === '"' || startChar === "'") {
+    const quote = startChar;
+    let escaped = false;
+    let value = "";
+
+    for (let cursor = index + 1; cursor < content.length; cursor += 1) {
+      const char = content[cursor];
+      if (escaped) {
+        value += char;
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        return value;
+      } else {
+        value += char;
+      }
+    }
+
+    return value;
+  }
+
+  if (startChar === "{" || startChar === "[") {
+    const opener = startChar;
+    const initialCloser = opener === "{" ? "}" : "]";
+    const stack = [initialCloser];
+    let quote: string | null = null;
+    let escaped = false;
+
+    for (let cursor = index + 1; cursor < content.length; cursor += 1) {
+      const char = content[cursor];
+
+      if (quote) {
+        if (escaped) {
+          escaped = false;
+        } else if (char === "\\") {
+          escaped = true;
+        } else if (char === quote) {
+          quote = null;
+        }
+        continue;
+      }
+
+      if (char === '"' || char === "'") {
+        quote = char;
+      } else if (char === "{") {
+        stack.push("}");
+      } else if (char === "[") {
+        stack.push("]");
+      } else if ((char === "}" || char === "]") && stack[stack.length - 1] === char) {
+        stack.pop();
+
+        if (stack.length === 0) {
+          return content.slice(index, cursor + 1);
+        }
+      }
+    }
+
+    return content.slice(index);
+  }
+
+  const rest = content.slice(index);
+  const nextField = rest.search(/,\s*["']?[A-Za-z0-9_-]+["']?\s*:/);
+  const rawValue = nextField >= 0 ? rest.slice(0, nextField) : rest;
+
+  return rawValue.replace(/[}\]]+\s*$/, "").trim();
+};
+
+const parseLooseStructuredContent = (content: string) => {
+  const answer = extractLooseFieldValue(content, "answer");
+  if (!answer) {
+    return null;
+  }
+
+  return {
+    hasStructure: true,
+    type: "new",
+    reasoning: extractLooseFieldValue(content, "reasoning"),
+    answer,
+    confidence: (extractLooseFieldValue(content, "confidence") || "medium").toLowerCase(),
+  };
+};
+
+const stripOuterBrackets = (content: string): string => {
+  const trimmed = stripJsonFence(content);
+  const first = trimmed[0];
+  const last = trimmed[trimmed.length - 1];
+
+  if ((first === "{" && last === "}") || (first === "[" && last === "]")) {
+    return trimmed.slice(1, -1);
+  }
+
+  return trimmed.replace(/^[{[]/, "").replace(/[}\]]$/, "");
+};
+
+const unquoteJsonishScalar = (content: string): string => {
+  const trimmed = content.trim().replace(/,$/, "").trim();
+  const first = trimmed[0];
+  const last = trimmed[trimmed.length - 1];
+
+  if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+    return trimmed.slice(1, -1);
+  }
+
+  return trimmed;
+};
+
+const splitTopLevelItems = (content: string): string[] => {
+  const items: string[] = [];
+  let start = 0;
+  let depth = 0;
+  let quote: string | null = null;
+  let escaped = false;
+
+  for (let index = 0; index < content.length; index += 1) {
+    const char = content[index];
+
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+    } else if (char === "{" || char === "[") {
+      depth += 1;
+    } else if (char === "}" || char === "]") {
+      depth = Math.max(0, depth - 1);
+    } else if (char === "," && depth === 0) {
+      const item = content.slice(start, index).trim();
+      if (item) {
+        items.push(item);
+      }
+      start = index + 1;
+    }
+  }
+
+  const finalItem = content.slice(start).trim();
+  if (finalItem) {
+    items.push(finalItem);
+  }
+
+  return items;
+};
+
+const parseJsonishObjectEntries = (content: string): Array<{ key: string; value: string }> => {
+  const source = stripJsonFence(content);
+  const entries: Array<{ key: string; value: string }> = [];
+  const keyMatches: Array<{ key: string; keyStart: number; valueStart: number }> = [];
+  let depth = 0;
+  let quote: string | null = null;
+  let escaped = false;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (char === "{" || char === "[") {
+      depth += 1;
+      continue;
+    }
+
+    if (char === "}" || char === "]") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+
+    if ((char === '"' || char === "'") && depth === 1) {
+      const keyQuote = char;
+      let cursor = index + 1;
+      let key = "";
+      let keyEscaped = false;
+
+      for (; cursor < source.length; cursor += 1) {
+        const keyChar = source[cursor];
+        if (keyEscaped) {
+          key += keyChar;
+          keyEscaped = false;
+        } else if (keyChar === "\\") {
+          keyEscaped = true;
+        } else if (keyChar === keyQuote) {
+          break;
+        } else {
+          key += keyChar;
+        }
+      }
+
+      let afterKey = cursor + 1;
+      while (/\s/.test(source[afterKey] ?? "")) {
+        afterKey += 1;
+      }
+
+      if (source[afterKey] === ":") {
+        keyMatches.push({ key, keyStart: index, valueStart: afterKey + 1 });
+        index = afterKey;
+      } else {
+        quote = char;
+      }
+    }
+  }
+
+  const trimmedSource = source.trimEnd();
+  const objectEnd = trimmedSource.endsWith("}") ? source.lastIndexOf("}") : source.length;
+
+  for (let index = 0; index < keyMatches.length; index += 1) {
+    const current = keyMatches[index];
+    const next = keyMatches[index + 1];
+    const rawEnd = next ? next.keyStart : objectEnd;
+    const value = source
+      .slice(current.valueStart, rawEnd)
+      .replace(/,\s*$/, "")
+      .trim();
+
+    if (current.key && value) {
+      entries.push({ key: current.key, value });
+    }
+  }
+
+  return entries;
 };
 
 export default function Markdown({ content, isStreaming = false }: MarkdownProps) {
@@ -195,6 +513,11 @@ export default function Markdown({ content, isStreaming = false }: MarkdownProps
         type: "json",
         data: parsedJson,
       };
+    }
+
+    const looseStructuredContent = parseLooseStructuredContent(content);
+    if (looseStructuredContent) {
+      return looseStructuredContent;
     }
 
     // Legacy: Parse content to check for thought: and answer: sections
@@ -511,6 +834,65 @@ export default function Markdown({ content, isStreaming = false }: MarkdownProps
     return <span>{String(value)}</span>;
   };
 
+  const renderLooseJsonishValue = (value: string, depth = 0): React.ReactNode => {
+    const trimmed = value.trim();
+    const parsed = parseJsonCandidates(trimmed);
+
+    if (parsed !== null) {
+      return renderJsonValue(parsed, depth);
+    }
+
+    if (trimmed.startsWith("{")) {
+      const entries = parseJsonishObjectEntries(trimmed);
+
+      if (entries.length > 0) {
+        return (
+          <div className={depth === 0 ? "space-y-3" : "space-y-2"}>
+            {entries.map(({ key, value: entryValue }) => (
+              <div key={`${depth}-${key}`} className={depth === 0 ? "" : "space-y-1"}>
+                <div className={`text-xs font-semibold uppercase tracking-wide ${theme === "dark" ? "text-gray-400" : "text-gray-500"}`}>
+                  {humanizeKey(key)}
+                </div>
+                <div className={`${theme === "dark" ? "text-gray-100" : "text-gray-900"}`}>
+                  {renderLooseJsonishValue(entryValue, depth + 1)}
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      }
+    }
+
+    if (trimmed.startsWith("[")) {
+      const parsedItems = parseJsonCandidates(trimmed);
+
+      if (Array.isArray(parsedItems)) {
+        return renderJsonValue(parsedItems, depth);
+      }
+
+      const items = splitTopLevelItems(stripOuterBrackets(trimmed));
+
+      if (items.length > 0) {
+        return (
+          <ul className={`list-disc list-inside space-y-1 ${theme === "dark" ? "text-gray-200" : "text-gray-800"}`}>
+            {items.map((item, index) => (
+              <li key={index}>{unquoteJsonishScalar(item)}</li>
+            ))}
+          </ul>
+        );
+      }
+    }
+
+    return (
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={markdownComponents}
+      >
+        {unquoteJsonishScalar(trimmed)}
+      </ReactMarkdown>
+    );
+  };
+
   // If content has structured sections, render as separate bubbles
   if (parsedContent.hasStructure) {
     // New structure with reasoning, answer, and confidence
@@ -556,6 +938,8 @@ export default function Markdown({ content, isStreaming = false }: MarkdownProps
             >
               {answerJson !== null ? (
                 renderJsonValue(answerJson)
+              ) : answer.trim().startsWith("{") || answer.trim().startsWith("[") ? (
+                renderLooseJsonishValue(answer)
               ) : (
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
@@ -704,6 +1088,8 @@ export default function Markdown({ content, isStreaming = false }: MarkdownProps
             >
               {answerJson !== null ? (
                 renderJsonValue(answerJson)
+              ) : answer.trim().startsWith("{") || answer.trim().startsWith("[") ? (
+                renderLooseJsonishValue(answer)
               ) : (
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
