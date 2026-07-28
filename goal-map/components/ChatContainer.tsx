@@ -64,7 +64,7 @@ export default function ChatContainer({ apiUrl, model, agent }: ChatContainerPro
       // Stream response using local state
       let assistantResponse = "";
 
-      for await (const chunk of streamChatResponse(`${apiUrl}/chat`, requestBody)) {
+      for await (const chunk of streamChatResponse(`${apiUrl}/genAI/chat`, requestBody)) {
         assistantResponse += chunk;
         setStreamingMessage(assistantResponse);
       }

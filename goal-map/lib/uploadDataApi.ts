@@ -2,7 +2,7 @@
 
 export const uploadDataApi = async (apiUrl: string, chunks: string) => {
   try {
-    const response = await fetch(apiUrl, {
+    const response = await fetch(`${apiUrl}/genAI`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

@@ -15,8 +15,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Chat Assistant",
-  description: "AI Chat Assistant with streaming responses",
+  title: "Lumenbase | Knowledge Base",
+  description: "A shared knowledge base for your team",
 };
 
 export default function RootLayout({

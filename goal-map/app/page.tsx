@@ -1,627 +1,157 @@
 "use client";
 
-import React, { useState } from "react";
-import * as mammoth from "mammoth";
-import ThreeScene from "@/components/ThreeScene";
-import { uploadDataApi } from "@/lib/uploadDataApi";
-import toast, { Toaster } from "react-hot-toast";
-import {
-  FiUpload,
-  FiFile,
-  FiCheck,
-  FiX,
-  FiMessageSquare,
-  FiMoon,
-  FiSun,
-  FiEye,
-  FiLoader,
-} from "react-icons/fi";
+import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import Script from "next/script";
+import toast, { Toaster } from "react-hot-toast";
+import * as mammoth from "mammoth";
+import { FiBookOpen, FiChevronDown, FiFileText, FiFolder, FiLoader, FiMoon, FiPlus, FiSearch, FiSun, FiTrash2, FiUpload, FiX, FiZap } from "react-icons/fi";
 
-type PdfTextItem = {
-  str: string;
-};
+type Status = "uploaded" | "processing" | "ready" | "failed" | string;
+type Document = { documentId: string; title: string; originalFilename: string; status: Status; storedChunks?: number; createdAt?: string };
+type SearchResult = { doc_id: string; text: string; score: number; document?: Document | null };
+type S3Upload = { url: string; method: "PUT"; headers: Record<string, string> };
 
-type PdfTextContent = {
-  items: PdfTextItem[];
-};
+const API = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ?? "";
+const endpoint = (path: string) => `${API}${path}`;
+const ownerId = process.env.NEXT_PUBLIC_KNOWLEDGE_BASE_OWNER_ID ?? "default-owner";
 
-type PdfPage = {
-  getTextContent: () => Promise<PdfTextContent>;
-};
-
-type PdfDocument = {
-  numPages: number;
-  getPage: (pageNumber: number) => Promise<PdfPage>;
-};
-
-type PdfJsLib = {
-  GlobalWorkerOptions: {
-    workerSrc: string;
-  };
-  getDocument: (source: { data: Uint8Array }) => {
-    promise: Promise<PdfDocument>;
-  };
-};
+const dateLabel = (date?: string) => date ? new Date(date).toLocaleDateString("en", { month: "short", day: "numeric", year: "numeric" }) : "Recently added";
+const statusClasses = (status: Status, dark: boolean) => status === "ready"
+  ? dark ? "bg-emerald-950 text-emerald-300" : "bg-emerald-50 text-emerald-700"
+  : status === "failed" ? dark ? "bg-rose-950 text-rose-300" : "bg-rose-50 text-rose-700"
+  : dark ? "bg-amber-950 text-amber-300" : "bg-amber-50 text-amber-700";
 
 export default function Home() {
-  const [file, setFile] = useState<File | null>(null);
-  const [extractedText, setExtractedText] = useState<string>("");
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
   const [chunks, setChunks] = useState<string[]>([]);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [uploading, setUploading] = useState<boolean>(false);
-  const [showModal, setShowModal] = useState<boolean>(false);
-  const [darkMode, setDarkMode] = useState<boolean>(true);
+  const [loadingDetails, setLoadingDetails] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [darkMode, setDarkMode] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const readyCount = useMemo(() => documents.filter((document) => document.status === "ready").length, [documents]);
 
-  function chunkText(
-    text: string,
-    minSize: number = 500,
-    maxSize: number = 800,
-    overlap: number = 125,
-  ): string[] {
-    const cleaned = text.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-    const paragraphs = cleaned.split(/\n\n+/).filter((p) => p.trim().length > 0);
-
-    const chunks: string[] = [];
-    let currentChunk = "";
-
-    for (let i = 0; i < paragraphs.length; i++) {
-      const para = paragraphs[i].trim();
-      const potentialChunk = currentChunk ? currentChunk + "\n\n" + para : para;
-
-      if (potentialChunk.length <= maxSize) {
-        currentChunk = potentialChunk;
-      } else if (currentChunk.length >= minSize) {
-        chunks.push(currentChunk);
-        const overlapText = currentChunk.slice(-overlap);
-        currentChunk = overlapText + "\n\n" + para;
-      } else if (para.length > maxSize) {
-        if (currentChunk) {
-          chunks.push(currentChunk);
-        }
-
-        const sentences = para.match(/[^.!?]+[.!?]+/g) || [para];
-        let sentenceChunk = "";
-
-        for (const sentence of sentences) {
-          const potentialSentenceChunk = sentenceChunk
-            ? sentenceChunk + " " + sentence
-            : sentence;
-
-          if (potentialSentenceChunk.length <= maxSize) {
-            sentenceChunk = potentialSentenceChunk;
-          } else if (sentenceChunk.length >= minSize) {
-            chunks.push(sentenceChunk);
-            const overlapText = sentenceChunk.slice(-overlap);
-            sentenceChunk = overlapText + " " + sentence;
-          } else {
-            sentenceChunk = potentialSentenceChunk;
-          }
-        }
-
-        currentChunk = sentenceChunk;
-      } else {
-        currentChunk = potentialChunk;
-      }
-    }
-
-    if (currentChunk.trim() && (currentChunk.length >= minSize || chunks.length === 0)) {
-      chunks.push(currentChunk.trim());
-    }
-
-    return chunks;
-  }
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (selectedFile) {
-      const fileType = selectedFile.name.split(".").pop()?.toLowerCase();
-      const validTypes = ["pdf", "docx", "doc", "txt"];
-
-      if (!validTypes.includes(fileType || "")) {
-        toast.error("Invalid file type. Please select PDF, DOCX, or TXT files.");
-        return;
-      }
-
-      const maxSize = 10 * 1024 * 1024;
-      if (selectedFile.size > maxSize) {
-        toast.error("File size exceeds 10MB limit.");
-        return;
-      }
-
-      setFile(selectedFile);
-      setExtractedText("");
-      setChunks([]);
-      toast.success(`File "${selectedFile.name}" selected successfully!`);
-    }
+  const loadDocuments = async () => {
+    if (!API) { setLoading(false); return; }
+    try {
+      const response = await fetch(endpoint(`/knowledge-base/documents?ownerId=${encodeURIComponent(ownerId)}`));
+      if (!response.ok) throw new Error("Could not load your documents");
+      setDocuments(await response.json() as Document[]);
+    } catch (error) { toast.error(error instanceof Error ? error.message : "Could not load documents"); }
+    finally { setLoading(false); }
   };
+  useEffect(() => { loadDocuments(); }, []);
 
-  const extractTextFromPDF = async (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        try {
-          const result = e.target?.result;
-          if (!result || typeof result === "string") {
-            throw new Error("Invalid file data");
-          }
-
-          const typedArray = new Uint8Array(result);
-          const pdfjsLib = (window as Window & { "pdfjs-dist/build/pdf"?: PdfJsLib })[
-            "pdfjs-dist/build/pdf"
-          ];
-
-          if (!pdfjsLib) {
-            throw new Error("PDF.js library not loaded");
-          }
-
-          pdfjsLib.GlobalWorkerOptions.workerSrc =
-            "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-
-          const pdf = await pdfjsLib.getDocument({ data: typedArray }).promise;
-          let fullText = "";
-
-          for (let i = 1; i <= pdf.numPages; i++) {
-            const page = await pdf.getPage(i);
-            const textContent = await page.getTextContent();
-            const pageText = textContent.items.map((item) => item.str).join(" ");
-            fullText += pageText + "\n\n";
-          }
-
-          resolve(fullText);
-        } catch (err) {
-          reject(err);
-        }
-      };
-      reader.onerror = () => reject(new Error("Failed to read file"));
-      reader.readAsArrayBuffer(file);
-    });
-  };
-
-  const extractTextFromWord = async (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        try {
-          const arrayBuffer = e.target?.result;
-          if (!arrayBuffer || typeof arrayBuffer === "string") {
-            throw new Error("Invalid file data");
-          }
-
-          const result = await mammoth.extractRawText({
-            arrayBuffer: arrayBuffer as ArrayBuffer,
-          });
-          resolve(result.value);
-        } catch (err) {
-          reject(err);
-        }
-      };
-      reader.onerror = () => reject(new Error("Failed to read file"));
-      reader.readAsArrayBuffer(file);
-    });
-  };
-
-  const extractTextFromTxt = async (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const result = e.target?.result;
-        if (typeof result === "string") {
-          resolve(result);
-        } else {
-          reject(new Error("Failed to read text file"));
-        }
-      };
-      reader.onerror = () => reject(new Error("Failed to read file"));
-      reader.readAsText(file);
-    });
-  };
-
-  const processAndUpload = async () => {
-    if (!file) {
-      toast.error("Please select a file first");
+  const chooseFile = (file?: File) => {
+    if (!file) return;
+    const extension = file.name.split(".").pop()?.toLowerCase();
+    if (!extension || !["txt", "md", "docx"].includes(extension)) {
+      toast.error("Choose a TXT, Markdown, or DOCX file.");
       return;
     }
+    setPendingFile(file);
+  };
+  const onFileChange = (event: ChangeEvent<HTMLInputElement>) => { chooseFile(event.target.files?.[0]); event.target.value = ""; };
+  const onDrop = (event: DragEvent<HTMLDivElement>) => { event.preventDefault(); setDragging(false); chooseFile(event.dataTransfer.files?.[0]); };
 
-    const toastId = toast.loading("Extracting text...");
-
+  const uploadPendingFile = async () => {
+    const file = pendingFile;
+    if (!file) return;
+    if (!API) { toast.error("Add NEXT_PUBLIC_API_URL to connect the knowledge-base API."); return; }
+    const extension = file.name.split(".").pop()?.toLowerCase();
+    const contentType = file.type || "application/octet-stream";
+    const toastId = toast.loading(`Uploading ${file.name}...`);
+    setUploading(true);
     try {
-      setLoading(true);
-      let text = "";
-      const fileType = file.name.split(".").pop()?.toLowerCase();
-
-      if (fileType === "pdf") {
-        text = await extractTextFromPDF(file);
-      } else if (fileType === "docx" || fileType === "doc") {
-        text = await extractTextFromWord(file);
-      } else if (fileType === "txt") {
-        text = await extractTextFromTxt(file);
-      } else {
-        throw new Error("Unsupported file type. Please use PDF, DOCX, or TXT files.");
-      }
-
-      if (!text.trim()) {
-        throw new Error("No text content found in the file");
-      }
-
-      setExtractedText(text);
-
-      toast.loading("Chunking text...", { id: toastId });
-
-      const textChunks = chunkText(text);
-      setChunks(textChunks);
-
-      setLoading(false);
-
-      toast.loading("Uploading chunks...", { id: toastId });
-
-      setUploading(true);
-      await uploadDataApi(`${process.env.NEXT_PUBLIC_API_URL}/ragStore`, text);
-      setUploading(false);
-
-      toast.success(`Successfully processed and uploaded ${textChunks.length} chunks!`, {
-        id: toastId,
-        duration: 3000,
+      const createResponse = await fetch(endpoint("/knowledge-base/documents/upload-url"), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: file.name, contentType, ownerId, title: file.name }),
       });
-      setFile(null);
-    } catch (err) {
-      setLoading(false);
-      setUploading(false);
-      const errorMessage = err instanceof Error ? err.message : "Failed to process and upload file";
-      toast.error(errorMessage, { id: toastId });
-    }
+      if (!createResponse.ok) throw new Error("Could not create an upload URL");
+      const { document, upload } = await createResponse.json() as { document: Document; upload: S3Upload };
+      if (!upload?.url) throw new Error("The server did not return an S3 upload URL");
+      const uploadResponse = await fetch(upload.url, { method: upload.method, headers: upload.headers, body: file, redirect: "error" });
+      if (!uploadResponse.ok) throw new Error(`S3 upload failed: ${uploadResponse.status}`);
+      const uploaded = await fetch(endpoint(`/knowledge-base/documents/${document.documentId}/uploaded`), { method: "POST" });
+      if (!uploaded.ok) throw new Error("The document was uploaded but its status could not be updated");
+      const text = extension === "docx" ? (await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() })).value : await file.text();
+      if (!text.trim()) throw new Error("No readable text was found in this document");
+      const ingested = await fetch(endpoint(`/knowledge-base/documents/${document.documentId}/ingest`), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+      if (!ingested.ok) throw new Error("The document was uploaded but could not be indexed");
+      const data = await ingested.json() as { document: Document };
+      setDocuments((current) => [data.document, ...current.filter((item) => item.documentId !== data.document.documentId)]);
+      setPendingFile(null);
+      toast.success("Document uploaded and indexed", { id: toastId });
+    } catch (error) { toast.error(error instanceof Error ? error.message : "Upload failed", { id: toastId }); }
+    finally { setUploading(false); }
   };
 
-  const toggleDarkMode = () => {
-    setDarkMode(!darkMode);
+  const search = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!query.trim() || !API) return;
+    setSearching(true);
+    try {
+      const response = await fetch(endpoint(`/knowledge-base/search?query=${encodeURIComponent(query)}&topK=6`), { method: "POST" });
+      if (!response.ok) throw new Error("Search is unavailable right now");
+      setResults((await response.json() as { results: SearchResult[] }).results || []);
+    } catch (error) { toast.error(error instanceof Error ? error.message : "Search failed"); }
+    finally { setSearching(false); }
   };
 
-  return (
-    <div
-      className={`relative min-h-screen overflow-hidden transition-colors duration-300 ${
-        darkMode ? "bg-gray-950" : "bg-slate-100"
-      }`}
-    >
-      <ThreeScene />
-      <div
-        className={`pointer-events-none fixed inset-0 ${
-          darkMode ? "bg-gray-950/70" : "bg-white/70"
-        }`}
-      />
+  const removeDocument = async (document: Document) => {
+    if (!API || !window.confirm(`Delete "${document.title}"? This cannot be undone.`)) return;
+    try {
+      const response = await fetch(endpoint(`/knowledge-base/documents/${document.documentId}`), { method: "DELETE" });
+      if (!response.ok) throw new Error("Could not delete this document");
+      setDocuments((current) => current.filter((item) => item.documentId !== document.documentId));
+      setSelectedDocument((current) => current?.documentId === document.documentId ? null : current);
+      toast.success("Document deleted");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "Delete failed"); }
+  };
 
-      <div className="relative z-10 min-h-screen p-4 sm:p-8">
-        <Toaster
-          position="top-right"
-          toastOptions={{
-            duration: 3000,
-            style: {
-              background: darkMode ? "#1f2937" : "#fff",
-              color: darkMode ? "#f3f4f6" : "#1f2937",
-            },
-            success: {
-              iconTheme: {
-                primary: "#10b981",
-                secondary: "#fff",
-              },
-            },
-            error: {
-              iconTheme: {
-                primary: "#ef4444",
-                secondary: "#fff",
-              },
-            },
-          }}
-        />
+  const openDocument = async (document: Document) => {
+    setSelectedDocument(document);
+    setChunks([]);
+    if (!API || document.status !== "ready") return;
+    setLoadingDetails(true);
+    try {
+      const response = await fetch(endpoint(`/knowledge-base/documents/${document.documentId}/chunks`));
+      if (!response.ok) throw new Error("Could not load document preview");
+      const data = await response.json() as { chunks: { text?: string }[] };
+      setChunks(data.chunks.map((chunk) => chunk.text || "").filter(Boolean));
+    } catch (error) { toast.error(error instanceof Error ? error.message : "Could not load document preview"); }
+    finally { setLoadingDetails(false); }
+  };
 
-        <div className="mx-auto mb-6 flex max-w-4xl items-center justify-between">
-          <Link
-            href="/chat"
-            className={`flex items-center gap-2 rounded-lg px-4 py-2 font-semibold transition-all duration-300 ${
-              darkMode
-                ? "bg-indigo-600 hover:bg-indigo-700 text-white"
-                : "bg-white hover:bg-gray-50 text-gray-800 shadow-md hover:shadow-lg"
-            }`}
-          >
-            <FiMessageSquare className="text-lg" />
-            <span>Go to Chat</span>
-          </Link>
+  const surface = darkMode ? "bg-slate-950 text-slate-100" : "bg-[#f7faff] text-slate-900";
+  const card = darkMode ? "border-slate-800 bg-slate-900" : "border-blue-100 bg-white";
+  const muted = darkMode ? "text-slate-400" : "text-slate-500";
 
-          <button
-            onClick={toggleDarkMode}
-            className={`rounded-lg p-3 transition-all duration-300 ${
-              darkMode
-                ? "bg-gray-700 hover:bg-gray-600 text-yellow-400"
-                : "bg-white hover:bg-gray-50 text-gray-800 shadow-md hover:shadow-lg"
-            }`}
-            aria-label="Toggle dark mode"
-          >
-            {darkMode ? <FiSun className="text-xl" /> : <FiMoon className="text-xl" />}
-          </button>
-        </div>
-
-        <div className="mx-auto max-w-4xl">
-          <div
-            className={`rounded-2xl p-6 shadow-2xl transition-colors duration-300 sm:p-8 ${
-              darkMode ? "bg-gray-800/90" : "bg-white/90"
-            } backdrop-blur-md`}
-          >
-            <div className="mb-8">
-              <h1
-                className={`mb-2 text-3xl font-bold sm:text-4xl ${
-                  darkMode ? "text-white" : "text-gray-800"
-                }`}
-              >
-                Document Uploader for RAG Agent
-              </h1>
-              <p
-                className={`text-sm sm:text-base ${
-                  darkMode ? "text-gray-400" : "text-gray-600"
-                }`}
-              >
-                Extract, chunk, and upload text from your documents for AI processing in your RAG
-                agent.
-              </p>
-            </div>
-
-            <div className="space-y-6">
-              <div>
-                <label
-                  className={`mb-3 block text-sm font-medium ${
-                    darkMode ? "text-gray-300" : "text-gray-700"
-                  }`}
-                >
-                  Select File (PDF, DOCX, TXT)
-                </label>
-                <div className="relative">
-                  <input
-                    type="file"
-                    accept=".pdf,.docx,.doc,.txt"
-                    onChange={handleFileChange}
-                    className="hidden"
-                    id="file-upload"
-                    disabled={loading || uploading}
-                  />
-                  <label
-                    htmlFor="file-upload"
-                    className={`flex w-full cursor-pointer items-center justify-center gap-3 rounded-xl border-2 border-dashed p-6 transition-all duration-300 ${
-                      darkMode
-                        ? "border-gray-600 bg-gray-700 hover:border-indigo-500 hover:bg-gray-600"
-                        : "border-gray-300 bg-gray-50 hover:border-indigo-500 hover:bg-gray-100"
-                    } ${loading || uploading ? "cursor-not-allowed opacity-50" : ""}`}
-                  >
-                    <FiUpload
-                      className={`text-2xl ${darkMode ? "text-indigo-400" : "text-indigo-600"}`}
-                    />
-                    <span className={`font-medium ${darkMode ? "text-gray-300" : "text-gray-700"}`}>
-                      {file ? "Change File" : "Click to upload or drag and drop"}
-                    </span>
-                  </label>
-                </div>
-              </div>
-
-              {file && (
-                <div
-                  className={`rounded-xl border p-4 transition-colors duration-300 ${
-                    darkMode
-                      ? "bg-gray-700 border-gray-600"
-                      : "bg-gradient-to-r from-indigo-50 to-purple-50 border-indigo-200"
-                  }`}
-                >
-                  <div className="flex items-start gap-3">
-                    <FiFile
-                      className={`mt-1 text-2xl ${
-                        darkMode ? "text-indigo-400" : "text-indigo-600"
-                      }`}
-                    />
-                    <div className="flex-1">
-                      <p className={`mb-1 font-semibold ${darkMode ? "text-white" : "text-gray-800"}`}>
-                        {file.name}
-                      </p>
-                      <p className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-600"}`}>
-                        Size: {(file.size / 1024).toFixed(2)} KB
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => {
-                        setFile(null);
-                        setExtractedText("");
-                        setChunks([]);
-                        toast.success("File removed");
-                      }}
-                      className={`rounded-lg p-2 transition-colors ${
-                        darkMode
-                          ? "hover:bg-gray-600 text-gray-400 hover:text-white"
-                          : "hover:bg-white text-gray-600 hover:text-gray-800"
-                      }`}
-                      disabled={loading || uploading}
-                    >
-                      <FiX className="text-xl" />
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              <button
-                onClick={processAndUpload}
-                disabled={!file || loading || uploading}
-                className={`flex w-full items-center justify-center gap-2 rounded-xl px-6 py-4 font-semibold text-white transition-all duration-300 ${
-                  !file || loading || uploading
-                    ? "bg-gray-400 cursor-not-allowed"
-                    : darkMode
-                      ? "bg-indigo-600 hover:bg-indigo-700 hover:shadow-lg hover:shadow-indigo-500/50"
-                      : "bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 hover:shadow-lg hover:shadow-indigo-500/50"
-                }`}
-              >
-                {loading ? (
-                  <>
-                    <FiLoader className="animate-spin text-xl" />
-                    <span>Processing...</span>
-                  </>
-                ) : uploading ? (
-                  <>
-                    <FiLoader className="animate-spin text-xl" />
-                    <span>Uploading...</span>
-                  </>
-                ) : (
-                  <>
-                    <FiUpload className="text-xl" />
-                    <span>Process and Upload</span>
-                  </>
-                )}
-              </button>
-
-              {chunks.length > 0 && (
-                <div
-                  className={`absolute bottom-5 left-5 w-[250px] rounded-xl border p-4 transition-colors duration-300 ${
-                    darkMode
-                      ? "bg-green-900/20 border-green-800"
-                      : "bg-green-50 border-green-200"
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div>
-                        <p className={`text-sm font-semibold ${darkMode ? "text-green-400" : "text-green-700"}`}>
-                          Created {chunks.length} chunks
-                        </p>
-                        <p className={`text-sm ${darkMode ? "text-green-500" : "text-green-600"}`}>
-                          Total characters: {extractedText.length.toLocaleString()}
-                        </p>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => setShowModal(true)}
-                      className={`flex items-center gap-2 rounded-lg px-4 py-2 font-medium transition-colors ${
-                        darkMode
-                          ? "bg-green-800 hover:bg-green-700 text-green-200"
-                          : "bg-green-600 hover:bg-green-700 text-white"
-                      }`}
-                    >
-                      <FiEye />
-                      <span>View</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {showModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-fadeIn">
-            <div
-              className={`flex max-h-[90vh] w-full max-w-5xl flex-col rounded-2xl shadow-2xl transition-colors duration-300 ${
-                darkMode ? "bg-gray-800" : "bg-white"
-              }`}
-            >
-              <div
-                className={`flex items-center justify-between border-b p-6 ${
-                  darkMode ? "border-gray-700" : "border-gray-200"
-                }`}
-              >
-                <h2 className={`text-2xl font-bold ${darkMode ? "text-white" : "text-gray-800"}`}>
-                  Extracted Data & Chunks
-                </h2>
-                <button
-                  onClick={() => setShowModal(false)}
-                  className={`rounded-lg p-2 transition-colors ${
-                    darkMode
-                      ? "hover:bg-gray-700 text-gray-400 hover:text-white"
-                      : "hover:bg-gray-100 text-gray-500 hover:text-gray-700"
-                  }`}
-                >
-                  <FiX className="text-2xl" />
-                </button>
-              </div>
-
-              <div className="flex-1 space-y-6 overflow-y-auto p-6">
-                <div>
-                  <h3
-                    className={`mb-3 flex items-center gap-2 text-lg font-semibold ${
-                      darkMode ? "text-gray-200" : "text-gray-700"
-                    }`}
-                  >
-                    <FiFile className="text-xl" />
-                    Extracted Text Preview
-                  </h3>
-                  <div
-                    className={`max-h-48 overflow-y-auto rounded-xl p-4 transition-colors duration-300 ${
-                      darkMode ? "bg-gray-700" : "bg-gray-50"
-                    }`}
-                  >
-                    <p className={`whitespace-pre-wrap text-sm ${darkMode ? "text-gray-300" : "text-gray-600"}`}>
-                      {extractedText.substring(0, 500)}
-                      {extractedText.length > 500 && "..."}
-                    </p>
-                  </div>
-                  <p className={`mt-2 text-xs ${darkMode ? "text-gray-500" : "text-gray-500"}`}>
-                    Total characters: {extractedText.length.toLocaleString()}
-                  </p>
-                </div>
-
-                <div>
-                  <h3
-                    className={`mb-3 flex items-center gap-2 text-lg font-semibold ${
-                      darkMode ? "text-gray-200" : "text-gray-700"
-                    }`}
-                  >
-                    <FiCheck className="text-xl" />
-                    Chunks ({chunks.length})
-                  </h3>
-                  <div className="space-y-3">
-                    {chunks.map((chunk, index) => (
-                      <div
-                        key={index}
-                        className={`rounded-xl border p-4 transition-colors duration-300 ${
-                          darkMode
-                            ? "bg-gray-700 border-gray-600"
-                            : "bg-gradient-to-r from-indigo-50 to-purple-50 border-indigo-100"
-                        }`}
-                      >
-                        <div className="mb-2 flex items-center justify-between">
-                          <span
-                            className={`text-sm font-semibold ${
-                              darkMode ? "text-indigo-400" : "text-indigo-700"
-                            }`}
-                          >
-                            Chunk {index + 1}
-                          </span>
-                          <span
-                            className={`rounded-md px-2 py-1 text-xs ${
-                              darkMode ? "bg-gray-600 text-gray-300" : "bg-white text-gray-600"
-                            }`}
-                          >
-                            {chunk.length} chars
-                          </span>
-                        </div>
-                        <p className={`whitespace-pre-wrap text-sm ${darkMode ? "text-gray-300" : "text-gray-700"}`}>
-                          {chunk}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div className={`border-t p-6 ${darkMode ? "border-gray-700" : "border-gray-200"}`}>
-                <button
-                  onClick={() => setShowModal(false)}
-                  className={`w-full rounded-xl px-4 py-3 font-semibold transition-colors ${
-                    darkMode
-                      ? "bg-gray-700 hover:bg-gray-600 text-white"
-                      : "bg-gray-200 hover:bg-gray-300 text-gray-800"
-                  }`}
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <Script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" />
+  return <main className={`min-h-screen transition-colors ${surface}`}>
+    <Toaster position="top-right" toastOptions={{ style: { borderRadius: "12px", fontWeight: 500 } }} />
+    <header className={`border-b ${darkMode ? "border-slate-800 bg-slate-950/85" : "border-blue-100 bg-white/85"} sticky top-0 z-20 backdrop-blur-xl`}>
+      <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
+        <div className="flex items-center gap-3"><div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-lg shadow-blue-500/30"><FiBookOpen /></div><span className="text-lg font-bold">Lumen<span className="text-blue-500">base</span></span></div>
+        <div className="flex items-center gap-2"><Link href="/chat" className={`hidden items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold sm:flex ${darkMode ? "text-slate-300 hover:bg-slate-800" : "text-slate-600 hover:bg-blue-50"}`}><FiZap className="text-blue-500" /> Ask AI</Link><button onClick={() => setDarkMode((value) => !value)} className={`rounded-xl p-2.5 ${darkMode ? "bg-slate-800 text-amber-300" : "bg-blue-50 text-blue-700"}`} aria-label="Toggle dark mode">{darkMode ? <FiSun /> : <FiMoon />}</button><button onClick={() => inputRef.current?.click()} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-blue-600/25 hover:bg-blue-700"><FiPlus /> Add document</button></div>
       </div>
+    </header>
+    <input ref={inputRef} type="file" className="hidden" accept=".txt,.md,.docx" onChange={onFileChange} />
+    <div className="mx-auto max-w-6xl px-5 py-9">
+      <div className="mb-8 flex flex-wrap items-end justify-between gap-4"><div><p className="mb-1 text-sm font-bold uppercase tracking-widest text-blue-500">Knowledge base</p><h1 className="text-3xl font-bold tracking-tight">Your team&apos;s documents, in one place.</h1><p className={`mt-2 text-sm ${muted}`}>Upload documents, then search the knowledge your team has collected.</p></div><div className={`rounded-xl border px-4 py-2 text-center ${card}`}><p className="text-lg font-bold">{readyCount}</p><p className={`text-[10px] font-bold uppercase tracking-wider ${muted}`}>Ready to search</p></div></div>
+      <form onSubmit={search} className="relative mb-6"><FiSearch className={`absolute left-4 top-1/2 -translate-y-1/2 ${muted}`} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your documents..." className={`w-full rounded-2xl border py-3.5 pl-11 pr-28 text-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 ${card}`} /><button disabled={searching} className="absolute right-2 top-2 rounded-xl bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60">{searching ? "Searching" : "Search"}</button></form>
+      {results.length > 0 && <div className={`mb-6 rounded-2xl border p-5 ${card}`}><p className={`mb-3 text-sm font-bold ${muted}`}>Search results for “{query}”</p><div className="space-y-2">{results.map((result, index) => <div key={`${result.doc_id}-${index}`} className={`rounded-xl p-3 ${darkMode ? "bg-slate-800" : "bg-blue-50"}`}><div className="mb-1 flex justify-between gap-4"><span className="font-semibold text-blue-500">{result.document?.title || "Document"}</span><span className={`text-xs ${muted}`}>{Math.round(result.score * 100)}% match</span></div><p className={`line-clamp-2 text-sm ${muted}`}>{result.text}</p></div>)}</div></div>}
+      <div onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={onDrop} className={`mb-8 rounded-2xl border-2 border-dashed p-5 transition ${dragging ? "border-blue-500 bg-blue-500/10" : darkMode ? "border-slate-700 bg-slate-900" : "border-blue-200 bg-white"}`}>
+        {pendingFile ? <div className="flex flex-wrap items-center gap-4"><div className="grid h-11 w-11 place-items-center rounded-xl bg-blue-100 text-blue-600"><FiFileText /></div><div className="min-w-0 flex-1"><p className="truncate font-semibold">{pendingFile.name}</p><p className={`text-sm ${muted}`}>{(pendingFile.size / 1024).toFixed(1)} KB · ready to upload</p></div><button onClick={() => setPendingFile(null)} disabled={uploading} className={`rounded-xl px-3 py-2 text-sm font-semibold ${muted}`}>Remove</button><button onClick={uploadPendingFile} disabled={uploading} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-60">{uploading ? <FiLoader className="animate-spin" /> : <FiUpload />} {uploading ? "Uploading" : "Upload document"}</button></div> : <div className="flex flex-wrap items-center gap-4"><div className="grid h-11 w-11 place-items-center rounded-xl bg-blue-100 text-xl text-blue-600"><FiUpload /></div><div className="flex-1"><p className="font-semibold">Choose a document to upload</p><p className={`text-sm ${muted}`}>TXT, Markdown, and DOCX files are supported.</p></div><button onClick={() => inputRef.current?.click()} className="rounded-xl border border-blue-200 px-4 py-2 text-sm font-bold text-blue-600 hover:bg-blue-50">Browse files</button></div>}
+      </div>
+      <div className="mb-3 flex items-center justify-between"><h2 className="text-lg font-bold">All folders & documents</h2><button className={`flex items-center gap-1 text-sm ${muted}`}>Newest <FiChevronDown /></button></div>
+      <div className={`overflow-hidden rounded-2xl border ${card}`}><div className={`flex items-center gap-3 border-b p-4 ${darkMode ? "border-slate-800" : "border-slate-100"}`}><FiFolder className="text-lg text-blue-500" /><span className="font-semibold">Knowledge base</span><span className={`ml-auto text-xs ${muted}`}>{documents.length} documents</span></div>{loading ? <div className="grid place-items-center py-16 text-blue-500"><FiLoader className="animate-spin text-2xl" /></div> : documents.length === 0 ? <div className={`py-14 text-center ${muted}`}><FiFileText className="mx-auto mb-3 text-3xl text-blue-400" /><p className="font-semibold">No documents yet</p><p className="mt-1 text-sm">Select a file above, then confirm with Upload document.</p></div> : documents.map((document) => <div key={document.documentId} role="button" tabIndex={0} onClick={() => openDocument(document)} onKeyDown={(event) => event.key === "Enter" && openDocument(document)} className={`group flex cursor-pointer items-center gap-3 border-b p-4 last:border-0 ${darkMode ? "border-slate-800 hover:bg-slate-800/70" : "border-slate-100 hover:bg-blue-50/50"}`}><div className="grid h-10 w-10 place-items-center rounded-xl bg-blue-100 text-blue-600"><FiFileText /></div><div className="min-w-0 flex-1"><p className="truncate font-semibold">{document.title}</p><p className={`mt-0.5 text-xs ${muted}`}>{document.originalFilename} · {dateLabel(document.createdAt)} · {document.storedChunks || 0} chunks</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-bold capitalize ${statusClasses(document.status, darkMode)}`}>{document.status}</span><button onClick={(event) => { event.stopPropagation(); removeDocument(document); }} className="rounded-lg p-2 text-slate-400 opacity-0 transition hover:bg-rose-50 hover:text-rose-600 group-hover:opacity-100" aria-label={`Delete ${document.title}`}><FiTrash2 /></button></div>)}</div>
     </div>
-  );
+    {selectedDocument && <><button onClick={() => setSelectedDocument(null)} className="fixed inset-0 z-30 bg-slate-950/30 backdrop-blur-[1px]" aria-label="Close document details" /><aside className={`fixed inset-y-0 right-0 z-40 flex w-full max-w-md flex-col border-l p-6 shadow-2xl ${darkMode ? "border-slate-800 bg-slate-950" : "border-blue-100 bg-white"}`}><div className="mb-7 flex items-start justify-between"><div className="grid h-12 w-12 place-items-center rounded-xl bg-blue-100 text-xl text-blue-600"><FiFileText /></div><button onClick={() => setSelectedDocument(null)} className={`rounded-xl p-2 ${darkMode ? "text-slate-400 hover:bg-slate-800" : "text-slate-500 hover:bg-blue-50"}`} aria-label="Close document details"><FiX /></button></div><h2 className="break-words text-xl font-bold leading-7">{selectedDocument.title}</h2><p className={`mt-1 text-sm ${muted}`}>{selectedDocument.originalFilename}</p><div className={`my-6 grid grid-cols-2 gap-3 border-y py-5 ${darkMode ? "border-slate-800" : "border-slate-100"}`}><div><p className="text-lg font-bold">{selectedDocument.storedChunks || 0}</p><p className={`text-xs ${muted}`}>Indexed chunks</p></div><div><p className={`inline-block rounded-full px-2.5 py-1 text-xs font-bold capitalize ${statusClasses(selectedDocument.status, darkMode)}`}>{selectedDocument.status}</p><p className={`mt-1 text-xs ${muted}`}>Document status</p></div></div><div className="min-h-0 flex-1 overflow-y-auto"><p className={`mb-3 text-xs font-bold uppercase tracking-wider ${muted}`}>Indexed content</p>{loadingDetails ? <div className="grid place-items-center py-10 text-blue-500"><FiLoader className="animate-spin text-xl" /></div> : chunks.length ? <div className="space-y-3">{chunks.slice(0, 5).map((chunk, index) => <div key={index} className={`rounded-xl p-4 text-sm leading-6 ${darkMode ? "bg-slate-900 text-slate-300" : "bg-blue-50 text-slate-600"}`}><p className="mb-2 text-xs font-bold text-blue-500">Chunk {index + 1}</p>{chunk}</div>)}</div> : <p className={`rounded-xl p-4 text-sm ${darkMode ? "bg-slate-900" : "bg-slate-50"} ${muted}`}>{selectedDocument.status === "ready" ? "No chunk preview is available yet." : "This document will have a preview once indexing is complete."}</p>}</div><button onClick={() => removeDocument(selectedDocument)} className="mt-6 flex items-center gap-2 text-sm font-semibold text-rose-600"><FiTrash2 /> Delete document</button></aside></>}
+  </main>;
 }
