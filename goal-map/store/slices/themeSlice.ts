@@ -4,10 +4,12 @@ export type Theme = "light" | "dark";
 
 interface ThemeState {
   mode: Theme;
+  initialized: boolean;
 }
 
 const initialState: ThemeState = {
   mode: "dark",
+  initialized: false,
 };
 
 const themeSlice = createSlice({
@@ -22,6 +24,7 @@ const themeSlice = createSlice({
     },
     initializeTheme: (state, action: PayloadAction<Theme>) => {
       state.mode = action.payload;
+      state.initialized = true;
     },
   },
 });

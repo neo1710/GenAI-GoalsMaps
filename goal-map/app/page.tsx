@@ -4,7 +4,10 @@ import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useRef, useState
 import Link from "next/link";
 import toast, { Toaster } from "react-hot-toast";
 import * as mammoth from "mammoth";
-import { FiBookOpen, FiCheck, FiChevronDown, FiDownload, FiFileText, FiFolder, FiLoader, FiMoon, FiPlus, FiSearch, FiSun, FiTrash2, FiUpload, FiX, FiZap } from "react-icons/fi";
+import { FiBookOpen, FiCheck, FiChevronDown, FiDownload, FiFileText, FiFolder, FiLoader, FiPlus, FiSearch, FiTrash2, FiUpload, FiX, FiZap } from "react-icons/fi";
+import { useSelector } from "react-redux";
+import { RootState } from "@/store";
+import ThemeToggle from "@/components/ThemeToggle";
 
 type Status = "uploaded" | "processing" | "ready" | "failed" | string;
 type Folder = { folderId: string; name: string; ownerId?: string; createdAt?: string };
@@ -35,8 +38,8 @@ export default function Home() {
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [creating, setCreating] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const [darkMode, setDarkMode] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const darkMode = useSelector((state: RootState) => state.theme.mode === "dark");
   const readyCount = useMemo(() => documents.filter((document) => document.status === "ready").length, [documents]);
   const activeFolder = folders.find((folder) => folder.folderId === activeFolderId);
   const visibleDocuments = activeFolderId ? documents.filter((document) => document.folderId === activeFolderId) : documents.filter((document) => !document.folderId);
@@ -136,7 +139,7 @@ export default function Home() {
   const muted = darkMode ? "text-slate-400" : "text-slate-500";
   return <main className={`min-h-screen transition-colors ${surface}`}>
     <Toaster position="top-right" toastOptions={{ style: { borderRadius: "12px", fontWeight: 500 } }} />
-    <header className={`sticky top-0 z-20 border-b backdrop-blur-xl ${darkMode ? "border-slate-800 bg-slate-950/85" : "border-blue-100 bg-white/85"}`}><div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4"><div className="flex items-center gap-3"><div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-lg shadow-blue-500/30"><FiBookOpen /></div><span className="text-lg font-bold">Lumen<span className="text-blue-500">base</span></span></div><div className="flex items-center gap-2"><Link href="/chat" className={`hidden items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold sm:flex ${darkMode ? "text-slate-300 hover:bg-slate-800" : "text-slate-600 hover:bg-blue-50"}`}><FiZap className="text-blue-500" /> Ask AI</Link><button onClick={() => setDarkMode((value) => !value)} className={`rounded-xl p-2.5 ${darkMode ? "bg-slate-800 text-amber-300" : "bg-blue-50 text-blue-700"}`}>{darkMode ? <FiSun /> : <FiMoon />}</button><button onClick={() => inputRef.current?.click()} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-blue-600/25 hover:bg-blue-700"><FiPlus /> Add document</button></div></div></header>
+    <header className={`sticky top-0 z-20 border-b backdrop-blur-xl ${darkMode ? "border-slate-800 bg-slate-950/85" : "border-blue-100 bg-white/85"}`}><div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4"><div className="flex items-center gap-3"><div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-lg shadow-blue-500/30"><FiBookOpen /></div><span className="text-lg font-bold">Lumen<span className="text-blue-500">base</span></span></div><div className="flex items-center gap-2"><Link href="/chat" className={`hidden items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold sm:flex ${darkMode ? "text-slate-300 hover:bg-slate-800" : "text-slate-600 hover:bg-blue-50"}`}><FiZap className="text-blue-500" /> Ask AI</Link><ThemeToggle /><button onClick={() => inputRef.current?.click()} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-blue-600/25 hover:bg-blue-700"><FiPlus /> Add document</button></div></div></header>
     <input ref={inputRef} type="file" className="hidden" accept=".txt,.md,.docx" onChange={onFileChange} />
     <div className="mx-auto max-w-6xl px-5 py-9"><div className="mb-8 flex flex-wrap items-end justify-between gap-4"><div><p className="mb-1 text-sm font-bold uppercase tracking-widest text-blue-500">Knowledge base</p><h1 className="text-3xl font-bold tracking-tight">Your team&apos;s documents, in one place.</h1><p className={`mt-2 text-sm ${muted}`}>Organize sources into folders, then search every indexed insight.</p></div><div className={`rounded-xl border px-4 py-2 text-center ${card}`}><p className="text-lg font-bold">{readyCount}</p><p className={`text-[10px] font-bold uppercase tracking-wider ${muted}`}>Ready to search</p></div></div>
       <form onSubmit={search} className="relative mb-6"><FiSearch className={`absolute left-4 top-1/2 -translate-y-1/2 ${muted}`} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your documents…" className={`w-full rounded-2xl border py-3.5 pl-11 pr-28 text-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 ${card}`} /><button disabled={searching} className="absolute right-2 top-2 rounded-xl bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60">{searching ? "Searching" : "Search"}</button></form>

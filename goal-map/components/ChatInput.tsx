@@ -37,8 +37,8 @@ export default function ChatInput({
           disabled={isLoading}
           className={`flex-1 px-4 py-2.5 sm:py-3 rounded-lg border transition-colors duration-200 focus:outline-none focus:ring-2 focus:border-transparent disabled:opacity-60 disabled:cursor-not-allowed ${
             theme === "dark"
-              ? "border-slate-700 bg-slate-800 text-white placeholder-gray-400 focus:ring-blue-400"
-              : "border-gray-300 bg-white text-gray-900 placeholder-gray-500 focus:ring-blue-500"
+              ? "border-slate-700 bg-slate-900 text-white placeholder-gray-400 focus:ring-blue-400"
+              : "border-blue-100 bg-white text-gray-900 placeholder-gray-500 focus:ring-blue-500"
           }`}
         />
         <button

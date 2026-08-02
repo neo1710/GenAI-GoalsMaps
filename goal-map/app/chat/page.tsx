@@ -1,104 +1,39 @@
 "use client";
 
-import { useSelector, useDispatch } from "react-redux";
+import Link from "next/link";
 import { useState } from "react";
-import { RootState } from "@/store";
+import { useDispatch, useSelector } from "react-redux";
 import ChatContainer from "@/components/ChatContainer";
 import ThemeToggle from "@/components/ThemeToggle";
-import { FiMessageCircle, FiTrash2 } from "react-icons/fi";
+import { RootState } from "@/store";
 import { clearMessages } from "@/store/slices/chatSlice";
+import { FiArrowLeft, FiBookOpen, FiMessageCircle, FiTrash2 } from "react-icons/fi";
 
 export default function ChatPage() {
   const dispatch = useDispatch();
   const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api/chat";
   const MODEL = process.env.NEXT_PUBLIC_MODEL || "gpt-3.5-turbo";
-  const theme = useSelector((state: RootState) => state.theme.mode);
-  const [selectedAgent, setSelectedAgent] = useState<string>("");
+  const darkMode = useSelector((state: RootState) => state.theme.mode === "dark");
+  const [selectedAgent, setSelectedAgent] = useState("");
+  const surface = darkMode ? "bg-slate-950 text-slate-100" : "bg-[#f7faff] text-slate-900";
+  const card = darkMode ? "border-slate-800 bg-slate-900" : "border-blue-100 bg-white";
+  const muted = darkMode ? "text-slate-400" : "text-slate-500";
 
-  const handleClearChat = () => {
-    dispatch(clearMessages());
-  };
-
-  return (
-    <div className={`flex h-screen flex-col transition-colors duration-200 ${
-      theme === "dark"
-        ? "bg-slate-950 text-gray-50"
-        : "bg-white text-gray-900"
-    }`}>
-      {/* Header */}
-      <header className={`border-b transition-colors duration-200 px-4 sm:px-6 lg:px-8 py-3 ${
-        theme === "dark"
-          ? "border-slate-700 bg-slate-900"
-          : "border-gray-200 bg-white"
-      }`}>
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className={`p-2.5 rounded-lg transition-colors duration-200 ${
-              theme === "dark"
-                ? "bg-slate-800"
-                : "bg-blue-100"
-            }`}>
-              <FiMessageCircle className={`w-5 h-5 ${
-                theme === "dark"
-                  ? "text-blue-400"
-                  : "text-blue-600"
-              }`} />
-            </div>
-            <div>
-              <h1 className={`text-xl sm:text-2xl font-bold ${
-                theme === "dark"
-                  ? "text-blue-400"
-                  : "text-blue-600"
-              }`}>
-                Chat Assistant
-              </h1>
-              <p className={`text-xs sm:text-sm ${
-                theme === "dark"
-                  ? "text-gray-400"
-                  : "text-gray-600"
-              }`}>
-                {MODEL}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <select
-              value={selectedAgent}
-              onChange={(e) => setSelectedAgent(e.target.value)}
-              className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-200 ${
-                theme === "dark"
-                  ? "bg-slate-800 text-gray-200 border border-slate-700 hover:bg-slate-700"
-                  : "bg-gray-100 text-gray-800 border border-gray-300 hover:bg-gray-200"
-              }`}
-            >
-              <option value="">Select Agent</option>
-              <option value="critiqueAgent">Critique Agent</option>
-              <option value="ragAgent">RAG Agent</option>
-            </select>
-            <button
-              onClick={handleClearChat}
-              className={`p-2.5 rounded-lg transition-colors duration-200 hover:scale-110 ${
-                theme === "dark"
-                  ? "bg-slate-800 hover:bg-slate-700 text-gray-300 hover:text-red-400"
-                  : "bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-red-600"
-              }`}
-              title="Clear chat history"
-            >
-              <FiTrash2 className="w-5 h-5" />
-            </button>
-            <ThemeToggle />
-          </div>
+  return <div className={`flex h-screen flex-col transition-colors duration-200 ${surface}`}>
+    <header className={`sticky top-0 z-20 border-b backdrop-blur-xl ${darkMode ? "border-slate-800 bg-slate-950/85" : "border-blue-100 bg-white/85"}`}>
+      <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-5 py-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <Link href="/" aria-label="Back to knowledge base" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-lg shadow-blue-500/30"><FiBookOpen /></Link>
+          <div className="min-w-0"><p className="text-lg font-bold">Lumen<span className="text-blue-500">base</span></p><div className={`flex items-center gap-1.5 text-xs ${muted}`}><FiMessageCircle className="text-blue-500" /><span className="truncate">AI workspace</span></div></div>
         </div>
-      </header>
-
-      {/* Main Chat Area */}
-      <main className={`flex-1 overflow-hidden flex flex-col transition-colors duration-200 ${
-        theme === "dark"
-          ? "bg-slate-950"
-          : "bg-white"
-      }`}>
-        <ChatContainer apiUrl={API_URL} model={MODEL} agent={selectedAgent} />
-      </main>
-    </div>
-  );
+        <div className="flex items-center gap-2">
+          <Link href="/" className={`hidden items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold sm:flex ${darkMode ? "text-slate-300 hover:bg-slate-800" : "text-slate-600 hover:bg-blue-50"}`}><FiArrowLeft /> Knowledge base</Link>
+          <select value={selectedAgent} onChange={(event) => setSelectedAgent(event.target.value)} aria-label="Select agent" className={`hidden rounded-xl border px-3 py-2.5 text-sm font-medium outline-none transition sm:block ${card} ${darkMode ? "hover:bg-slate-800" : "hover:bg-blue-50"}`}><option value="">General assistant</option><option value="critiqueAgent">Critique agent</option><option value="ragAgent">Knowledge assistant</option></select>
+          <button onClick={() => dispatch(clearMessages())} className={`rounded-xl p-2.5 transition ${darkMode ? "text-slate-400 hover:bg-slate-800 hover:text-rose-300" : "text-slate-500 hover:bg-rose-50 hover:text-rose-600"}`} aria-label="Clear chat" title="Clear chat"><FiTrash2 /></button>
+          <ThemeToggle />
+        </div>
+      </div>
+    </header>
+    <main className="min-h-0 flex-1"><ChatContainer apiUrl={API_URL} model={MODEL} agent={selectedAgent} /></main>
+  </div>;
 }

@@ -98,7 +98,7 @@ export default function ChatContainer({ apiUrl, model, agent }: ChatContainerPro
     <div className={`flex flex-col h-full w-full transition-colors duration-200 ${
       theme === "dark"
         ? "bg-slate-950"
-        : "bg-white"
+        : "bg-[#f7faff]"
     }`}>
       {/* Messages Container */}
       <div
@@ -106,7 +106,7 @@ export default function ChatContainer({ apiUrl, model, agent }: ChatContainerPro
         className={`flex-1 overflow-y-auto px-4 sm:px-6 lg:px-8 py-6 space-y-4 flex flex-col transition-colors duration-200 ${
           theme === "dark"
             ? "bg-slate-950"
-            : "bg-white"
+            : "bg-[#f7faff]"
         }`}
       >
         <div className="max-w-4xl mx-auto w-full">
@@ -115,7 +115,7 @@ export default function ChatContainer({ apiUrl, model, agent }: ChatContainerPro
               <div className="text-center py-12">
                 <div className={`w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center transition-colors duration-200 ${
                   theme === "dark"
-                    ? "bg-slate-800"
+                    ? "bg-slate-900"
                     : "bg-blue-100"
                 }`}>
                   <FiMessageCircle className={`w-8 h-8 ${
@@ -129,14 +129,14 @@ export default function ChatContainer({ apiUrl, model, agent }: ChatContainerPro
                     ? "text-gray-200"
                     : "text-gray-800"
                 }`}>
-                  Start a Conversation
+                  Ask your knowledge base
                 </p>
                 <p className={`text-sm transition-colors duration-200 ${
                   theme === "dark"
                     ? "text-gray-400"
                     : "text-gray-600"
                 }`}>
-                  Type a message to begin chatting with the AI
+                  Choose the Knowledge assistant to ask questions grounded in your indexed documents.
                 </p>
               </div>
             </div>
@@ -158,8 +158,8 @@ export default function ChatContainer({ apiUrl, model, agent }: ChatContainerPro
       {/* Input Container */}
       <div className={`border-t transition-colors duration-200 py-4 px-4 sm:px-6 lg:px-8 ${
         theme === "dark"
-          ? "border-slate-700 bg-slate-900"
-          : "border-gray-200 bg-white"
+          ? "border-slate-800 bg-slate-950/90"
+          : "border-blue-100 bg-white/90"
       }`}>
         <div className="max-w-4xl mx-auto w-full">
           <ChatInput onSendMessage={handleSendMessage} isLoading={isLoading} />

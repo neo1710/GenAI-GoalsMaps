@@ -31,8 +31,8 @@ export default function ChatMessage({ role, content, isStreaming = false }: Chat
           isUser
             ? "bg-blue-600 text-white rounded-br-none shadow-sm"
             : theme === "dark"
-            ? "bg-slate-800 text-gray-100 rounded-bl-none shadow-sm"
-            : "bg-gray-100 text-gray-900 rounded-bl-none shadow-sm"
+            ? "bg-slate-900 text-gray-100 rounded-bl-none shadow-sm"
+            : "border border-blue-100 bg-white text-gray-900 rounded-bl-none shadow-sm"
         }`}>
           <div className="text-sm leading-relaxed">
             {isUser ? (

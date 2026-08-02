@@ -18,8 +18,8 @@ export default function ThemeToggle() {
       onClick={handleToggle}
       className={`p-2 rounded-lg transition-colors duration-200 ${
         theme === "dark"
-          ? "bg-slate-700 hover:bg-slate-600 text-yellow-400"
-          : "bg-gray-200 hover:bg-gray-300 text-gray-600"
+        ? "bg-slate-800 text-amber-300 hover:bg-slate-700"
+          : "bg-blue-50 text-blue-700 hover:bg-blue-100"
       }`}
       aria-label="Toggle theme"
       title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}

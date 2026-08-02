@@ -9,9 +9,9 @@ import type { Theme } from "@/store/slices/themeSlice";
 export default function ThemeInitializer() {
   const dispatch = useDispatch();
   const theme = useSelector((state: RootState) => state.theme.mode);
+  const initialized = useSelector((state: RootState) => state.theme.initialized);
 
   useEffect(() => {
-    // Initialize theme from localStorage or system preference
     if (typeof window !== "undefined") {
       const stored = localStorage.getItem("theme") as Theme | null;
       const prefersDark = window.matchMedia(
@@ -24,15 +24,13 @@ export default function ThemeInitializer() {
   }, [dispatch]);
 
   useEffect(() => {
-    // Update DOM and localStorage when theme changes
-    if (typeof window !== "undefined") {
+    if (typeof window !== "undefined" && initialized) {
       const htmlElement = document.documentElement;
       const isDark = theme === "dark";
       htmlElement.classList.toggle("dark", isDark);
       localStorage.setItem("theme", theme);
-      console.log("Theme changed to:", theme, "Dark class added:", isDark);
     }
-  }, [theme]);
+  }, [theme, initialized]);
 
   return null;
 }
