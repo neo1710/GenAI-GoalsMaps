@@ -5,6 +5,7 @@ export interface Message {
 
 export interface ChatRequestBody {
   model: string;
+  provider?: "groq" | "mistral";
   stream: boolean;
   messages: Message[];
   agent?: string;

@@ -11,7 +11,7 @@ import { FiArrowLeft, FiBookOpen, FiMessageCircle, FiTrash2 } from "react-icons/
 
 export default function ChatPage() {
   const dispatch = useDispatch();
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api/chat";
+  const API_URL = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
   const MODEL = process.env.NEXT_PUBLIC_MODEL || "gpt-3.5-turbo";
   const darkMode = useSelector((state: RootState) => state.theme.mode === "dark");
   const [selectedAgent, setSelectedAgent] = useState("");
@@ -34,6 +34,6 @@ export default function ChatPage() {
         </div>
       </div>
     </header>
-    <main className="min-h-0 flex-1"><ChatContainer apiUrl={API_URL} model={MODEL} agent={selectedAgent} /></main>
+    <main className="min-h-0 flex-1"><ChatContainer apiUrl={API_URL} defaultModel={MODEL} agent={selectedAgent} /></main>
   </div>;
 }

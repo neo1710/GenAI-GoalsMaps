@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import ChatMessage from "./ChatMessage";
-import ChatInput from "./ChatInput";
+import ChatInput, { ChatModel } from "./ChatInput";
 import { streamChatResponse, ChatRequestBody } from "@/lib/streamingApi";
 import {
   addMessage,
@@ -16,11 +16,11 @@ import { FiMessageCircle } from "react-icons/fi";
 
 interface ChatContainerProps {
   apiUrl: string;
-  model: string;
+  defaultModel: string;
   agent: string;
 }
 
-export default function ChatContainer({ apiUrl, model, agent }: ChatContainerProps) {
+export default function ChatContainer({ apiUrl, defaultModel, agent }: ChatContainerProps) {
   const dispatch = useDispatch();
   const messages = useSelector((state: RootState) => state.chat.messages);
   const isLoading = useSelector((state: RootState) => state.chat.isLoading);
@@ -31,6 +31,32 @@ export default function ChatContainer({ apiUrl, model, agent }: ChatContainerPro
   // Local state for streaming message
   const [streamingMessage, setStreamingMessage] = useState<string>("");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [models, setModels] = useState<ChatModel[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState(defaultModel);
+  const [isLoadingModels, setIsLoadingModels] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    const loadModels = async () => {
+      try {
+        const response = await fetch(`${apiUrl}/genAI/models`);
+        if (!response.ok) throw new Error("Unable to load models");
+        const data = await response.json() as { models?: ChatModel[] };
+        const catalogue = Array.isArray(data.models) ? data.models.filter((model) => model?.id) : [];
+        if (!active || catalogue.length === 0) return;
+        setModels(catalogue);
+        setSelectedModelId((current) => catalogue.some((model) => model.id === current) ? current : catalogue[0].id);
+      } catch (error) {
+        console.warn("Could not load the model catalogue:", error);
+      } finally {
+        if (active) setIsLoadingModels(false);
+      }
+    };
+    loadModels();
+    return () => { active = false; };
+  }, [apiUrl]);
+
+  const selectedModel = models.find((model) => model.id === selectedModelId);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -55,7 +81,8 @@ export default function ChatContainer({ apiUrl, model, agent }: ChatContainerPro
     try {
       // Prepare request body
       const requestBody: ChatRequestBody = {
-        model,
+        model: selectedModelId,
+        ...(selectedModel?.provider && { provider: selectedModel.provider }),
         stream: true,
         messages: [...currentMessages, newUserMessage],
         ...(agent && { agent }),
@@ -86,7 +113,7 @@ export default function ChatContainer({ apiUrl, model, agent }: ChatContainerPro
       setIsStreaming(false);
       setStreamingMessage("");
     }
-  }, [messages, isStreaming, dispatch, apiUrl, model, agent]);
+  }, [messages, isStreaming, dispatch, apiUrl, selectedModelId, selectedModel, agent]);
 
   // Combine messages with streaming message for display
   const displayMessages = [...messages];
@@ -156,13 +183,9 @@ export default function ChatContainer({ apiUrl, model, agent }: ChatContainerPro
       </div>
 
       {/* Input Container */}
-      <div className={`border-t transition-colors duration-200 py-4 px-4 sm:px-6 lg:px-8 ${
-        theme === "dark"
-          ? "border-slate-800 bg-slate-950/90"
-          : "border-blue-100 bg-white/90"
-      }`}>
+      <div className="px-4 pb-5 pt-3 sm:px-6 lg:px-8">
         <div className="max-w-4xl mx-auto w-full">
-          <ChatInput onSendMessage={handleSendMessage} isLoading={isLoading} />
+          <ChatInput onSendMessage={handleSendMessage} isLoading={isLoading} models={models.length ? models : [{ id: defaultModel }]} selectedModelId={selectedModelId} onModelChange={setSelectedModelId} isLoadingModels={isLoadingModels} />
         </div>
       </div>
     </div>
