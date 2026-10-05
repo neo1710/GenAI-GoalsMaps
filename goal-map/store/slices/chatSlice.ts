@@ -1,8 +1,18 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 
+export interface MessageCitation {
+  documentId: string;
+  title?: string;
+  excerpt: string;
+  score: number;
+}
+
 export interface Message {
   role: string;
   content: string;
+  citations?: MessageCitation[];
+  finalNode?: { name: string; type: string };
+  workflowName?: string;
 }
 
 interface ChatState {
