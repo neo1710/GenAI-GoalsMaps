@@ -3,16 +3,16 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { FiArrowLeft, FiCheck, FiDatabase, FiGitBranch, FiLoader, FiZap } from "react-icons/fi";
+import { FiArrowLeft, FiCheck, FiDatabase, FiEdit3, FiGitBranch, FiLoader, FiZap } from "react-icons/fi";
 import { useSelector } from "react-redux";
 import { RootState } from "@/store";
 import ThemeToggle from "@/components/ThemeToggle";
-import { NewWorkflow, workflowsApi } from "@/lib/workflowsApi";
+import { CreateWorkflowParams, workflowsApi } from "@/lib/workflowsApi";
 
-const GROUNDED_TEMPLATE: NewWorkflow = {
+const GROUNDED_TEMPLATE: CreateWorkflowParams = {
   name: "Grounded knowledge assistant",
   description: "Rewrite, search the knowledge base, then answer from retrieved sources.",
-  version: 1,
+  status: "draft",
   nodes: [
     {
       name: "Question",
@@ -57,10 +57,10 @@ const GROUNDED_TEMPLATE: NewWorkflow = {
   ],
 };
 
-const SIMPLE_AGENT_TEMPLATE: NewWorkflow = {
+const SIMPLE_AGENT_TEMPLATE: CreateWorkflowParams = {
   name: "AI assistant flow",
   description: "Direct reasoning workflow using a prompt agent.",
-  version: 1,
+  status: "draft",
   nodes: [
     {
       name: "Question",
@@ -78,22 +78,39 @@ const SIMPLE_AGENT_TEMPLATE: NewWorkflow = {
   edges: [{ from: "Question", to: "AI Assistant" }],
 };
 
+const BLANK_DRAFT_TEMPLATE: CreateWorkflowParams = {
+  name: "Untitled workflow",
+  description: "New blank workflow canvas draft.",
+  status: "draft",
+  nodes: [],
+  edges: [],
+};
+
 export default function NewWorkflowPage() {
   const router = useRouter();
   const dark = useSelector((state: RootState) => state.theme.mode === "dark");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [selectedTemplate, setSelectedTemplate] = useState<"grounded" | "simple">("grounded");
+  const [selectedTemplate, setSelectedTemplate] = useState<"grounded" | "simple" | "blank">("grounded");
   const [customName, setCustomName] = useState("");
+  const [customDescription, setCustomDescription] = useState("");
 
   const create = async () => {
     setBusy(true);
     setError("");
     try {
-      const template = selectedTemplate === "grounded" ? GROUNDED_TEMPLATE : SIMPLE_AGENT_TEMPLATE;
-      const payload: NewWorkflow = {
+      const template =
+        selectedTemplate === "grounded"
+          ? GROUNDED_TEMPLATE
+          : selectedTemplate === "simple"
+          ? SIMPLE_AGENT_TEMPLATE
+          : BLANK_DRAFT_TEMPLATE;
+
+      const payload: CreateWorkflowParams = {
         ...template,
         name: customName.trim() || template.name,
+        ...(customDescription.trim() && { description: customDescription.trim() }),
+        status: "draft",
       };
       const workflow = await workflowsApi.create(payload);
       router.replace(`/workflows/${workflow.workflowId}`);
@@ -138,8 +155,8 @@ export default function NewWorkflowPage() {
         </div>
 
         <p className={`text-sm leading-6 ${muted}`}>
-          Choose a starter blueprint or customize your pipeline. Workflows follow a directed acyclic
-          graph (DAG) and output nodes are optional.
+          Choose a starter blueprint or initialize a blank canvas draft. Drafts permit saving in-progress
+          graphs and disconnected nodes.
         </p>
 
         <div className="mt-6 space-y-3">
@@ -205,26 +222,73 @@ export default function NewWorkflowPage() {
               tools.
             </p>
           </button>
+
+          <button
+            type="button"
+            onClick={() => setSelectedTemplate("blank")}
+            className={`w-full rounded-2xl border p-4 text-left transition ${
+              selectedTemplate === "blank"
+                ? "border-blue-500 bg-blue-500/5 ring-2 ring-blue-500/20"
+                : dark
+                ? "border-slate-800 hover:border-slate-700"
+                : "border-slate-200 hover:border-blue-200"
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <span className="grid h-8 w-8 place-items-center rounded-xl bg-slate-500/10 text-sm text-slate-500 font-bold">
+                  <FiEdit3 />
+                </span>
+                <span className="font-bold text-sm">Blank Canvas Draft</span>
+              </div>
+              <span className="rounded-full bg-slate-500/10 px-2 py-0.5 text-[10px] font-bold text-slate-500">
+                Empty
+              </span>
+            </div>
+            <p className={`mt-2 text-xs leading-5 ${muted}`}>
+              Starts with an empty canvas. Add nodes and connections freely in draft mode.
+            </p>
+          </button>
         </div>
 
-        <div className="mt-5">
-          <label className={`mb-1.5 block text-xs font-bold uppercase tracking-wider ${muted}`}>
-            Workflow name (optional)
-          </label>
-          <input
-            value={customName}
-            onChange={(e) => setCustomName(e.target.value)}
-            placeholder={
-              selectedTemplate === "grounded"
-                ? "Grounded knowledge assistant"
-                : "AI assistant flow"
-            }
-            className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 ${
-              dark
-                ? "border-slate-700 bg-slate-950 text-slate-100"
-                : "border-slate-200 bg-white text-slate-800"
-            }`}
-          />
+        <div className="mt-5 space-y-3">
+          <div>
+            <label className={`mb-1.5 block text-xs font-bold uppercase tracking-wider ${muted}`}>
+              Workflow name
+            </label>
+            <input
+              value={customName}
+              onChange={(e) => setCustomName(e.target.value)}
+              placeholder={
+                selectedTemplate === "grounded"
+                  ? "Grounded knowledge assistant"
+                  : selectedTemplate === "simple"
+                  ? "AI assistant flow"
+                  : "Customer Support Assistant"
+              }
+              className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 ${
+                dark
+                  ? "border-slate-700 bg-slate-950 text-slate-100"
+                  : "border-slate-200 bg-white text-slate-800"
+              }`}
+            />
+          </div>
+
+          <div>
+            <label className={`mb-1.5 block text-xs font-bold uppercase tracking-wider ${muted}`}>
+              Description (optional)
+            </label>
+            <input
+              value={customDescription}
+              onChange={(e) => setCustomDescription(e.target.value)}
+              placeholder="e.g. Draft assistant for handling billing questions"
+              className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 ${
+                dark
+                  ? "border-slate-700 bg-slate-950 text-slate-100"
+                  : "border-slate-200 bg-white text-slate-800"
+              }`}
+            />
+          </div>
         </div>
 
         {error && (

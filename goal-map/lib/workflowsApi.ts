@@ -64,19 +64,34 @@ export type WorkflowRegistry = {
   }[];
 };
 
-export type NewWorkflow = Pick<Workflow, "name" | "nodes" | "edges"> & {
+export interface CreateWorkflowParams {
+  name: string;
+  ownerId?: string;
   description?: string;
-  version: 1;
-};
+  status?: "draft" | "published";
+  version?: number;
+  nodes?: WorkflowNode[];
+  edges?: WorkflowEdge[];
+}
 
-export type WorkflowUpdate = {
-  version: number;
+export type NewWorkflow = CreateWorkflowParams;
+
+export interface UpdateWorkflowParams {
+  version?: number | string;
   name?: string;
   description?: string;
   status?: Workflow["status"];
   nodes?: WorkflowNode[];
   edges?: WorkflowEdge[];
-};
+}
+
+export type WorkflowUpdate = UpdateWorkflowParams;
+
+export interface DeleteWorkflowResponse {
+  message: string;
+  workflowId: string;
+  deletedWorkflow?: Workflow;
+}
 
 export type WorkflowChatRequest = {
   workflowName: string;
@@ -302,16 +317,22 @@ export const workflowsApi = {
   get: async (id: string) =>
     normalizeWorkflow(await request<unknown>(`/workflows/${encodeURIComponent(id)}`)),
 
-  create: async (payload: NewWorkflow, owner?: string) =>
+  create: async (payload: CreateWorkflowParams, owner?: string) =>
     normalizeWorkflow(
       await request<unknown>("/workflows", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ownerId: owner || DEFAULT_OWNER_ID, ...payload }),
+        body: JSON.stringify({
+          ownerId: payload.ownerId || owner || DEFAULT_OWNER_ID,
+          status: payload.status || "draft",
+          nodes: payload.nodes || [],
+          edges: payload.edges || [],
+          ...payload,
+        }),
       })
     ),
 
-  update: async (id: string, payload: WorkflowUpdate) =>
+  update: async (id: string, payload: UpdateWorkflowParams) =>
     normalizeWorkflow(
       await request<unknown>(`/workflows/${encodeURIComponent(id)}`, {
         method: "PATCH",
@@ -319,6 +340,18 @@ export const workflowsApi = {
         body: JSON.stringify(payload),
       })
     ),
+
+  delete: async (id: string): Promise<DeleteWorkflowResponse> => {
+    const res = await request<{ message: string; workflowId: string; deletedWorkflow?: unknown }>(
+      `/workflows/${encodeURIComponent(id)}`,
+      { method: "DELETE" }
+    );
+    return {
+      message: res.message,
+      workflowId: res.workflowId,
+      deletedWorkflow: res.deletedWorkflow ? normalizeWorkflow(res.deletedWorkflow) : undefined,
+    };
+  },
 
   runChat: async (payload: WorkflowChatRequest): Promise<WorkflowChatResponse> =>
     request<WorkflowChatResponse>("/genAI/chat", {

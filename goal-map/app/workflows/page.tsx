@@ -3,15 +3,16 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useSelector } from "react-redux";
+import toast, { Toaster } from "react-hot-toast";
 import {
   FiArrowRight,
-  FiArrowUpRight,
   FiClock,
   FiGitBranch,
   FiLayers,
   FiMessageSquare,
   FiPlus,
   FiSearch,
+  FiTrash2,
   FiUser,
   FiZap,
 } from "react-icons/fi";
@@ -47,6 +48,21 @@ export default function WorkflowsPage() {
     void loadWorkflows(scope);
   }, [scope]);
 
+  const handleDelete = async (workflow: Workflow) => {
+    const confirmed = window.confirm(
+      `Are you sure you want to delete "${workflow.name}"? This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    try {
+      await workflowsApi.delete(workflow.workflowId);
+      setItems((prev) => prev.filter((w) => w.workflowId !== workflow.workflowId));
+      toast.success("Workflow deleted successfully");
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete workflow");
+    }
+  };
+
   const visible = useMemo(
     () =>
       items.filter(
@@ -66,6 +82,7 @@ export default function WorkflowsPage() {
         dark ? "bg-slate-950 text-slate-100" : "bg-[#f7faff] text-slate-900"
       }`}
     >
+      <Toaster position="top-right" />
       <header
         className={`sticky top-0 z-20 border-b backdrop-blur-xl ${
           dark ? "border-slate-800 bg-slate-950/85" : "border-blue-100 bg-white/85"
@@ -276,6 +293,19 @@ export default function WorkflowsPage() {
                         <FiMessageSquare className="text-xs" />
                         <span>Chat</span>
                       </Link>
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(workflow)}
+                        title="Delete workflow"
+                        className={`rounded-xl border p-2 text-xs font-bold transition ${
+                          dark
+                            ? "border-slate-700 bg-slate-800 text-slate-400 hover:border-rose-500/30 hover:bg-rose-500/10 hover:text-rose-400"
+                            : "border-slate-200 bg-slate-50 text-slate-400 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
+                        }`}
+                        aria-label={`Delete ${workflow.name}`}
+                      >
+                        <FiTrash2 />
+                      </button>
                     </div>
 
                     <div

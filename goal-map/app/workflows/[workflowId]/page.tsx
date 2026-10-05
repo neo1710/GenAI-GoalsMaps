@@ -251,15 +251,28 @@ function reachable(start: string, adjacency: Map<string, string[]>): Set<string>
   return visited;
 }
 
-function validateGraph(nodes: FlowNode[], edges: FlowEdge[], registry: WorkflowRegistry | null): string | null {
-  if (!nodes.length) return "Add workflow nodes before saving.";
+/**
+ * Validates the graph matching the Backend API Specification:
+ * - Draft mode (isPublishing = false):
+ *   Allows in-progress state, single node or empty graph, and disconnected nodes while designing.
+ *   Enforces node name uniqueness, valid types, numeric positions, and DAG acyclicity.
+ * - Published mode (isPublishing = true):
+ *   Enforces full executable graph rules: exactly 1 input node, at least 1 node following input,
+ *   all nodes connected and reachable from input, no incoming input edges, no outgoing output edges.
+ */
+function validateGraph(
+  nodes: FlowNode[],
+  edges: FlowEdge[],
+  registry: WorkflowRegistry | null,
+  isPublishing = false
+): string | null {
+  if (!nodes.length) {
+    return isPublishing ? "Add workflow nodes before publishing." : null;
+  }
+
   const names = nodes.map((node) => node.data.title.trim());
   if (names.some((name) => !name)) return "Every node needs a non-empty name.";
   if (new Set(names).size !== names.length) return "Node names must be unique.";
-
-  const inputNodes = nodes.filter((node) => node.data.kind === "input");
-  if (inputNodes.length !== 1) return "A workflow must have exactly one input node.";
-  if (nodes.length < 2) return "A workflow must have at least one node after the input node.";
 
   for (const node of nodes) {
     if (!Number.isFinite(node.position.x) || !Number.isFinite(node.position.y)) {
@@ -284,11 +297,19 @@ function validateGraph(nodes: FlowNode[], edges: FlowEdge[], registry: WorkflowR
         return `${node.data.title} has an unsupported tool type: "${String(fields.tool)}".`;
       }
     }
-    if (node.data.kind === "condition" && !(typeof fields.expression === "string" && fields.expression.trim())) {
-      return `${node.data.title} requires an expression.`;
+    if (
+      isPublishing &&
+      node.data.kind === "condition" &&
+      !(typeof fields.expression === "string" && fields.expression.trim())
+    ) {
+      return `${node.data.title} requires an expression to publish.`;
     }
-    if (node.data.kind === "output" && !(typeof fields.value === "string" && fields.value.trim())) {
-      return `${node.data.title} requires a response value.`;
+    if (
+      isPublishing &&
+      node.data.kind === "output" &&
+      !(typeof fields.value === "string" && fields.value.trim())
+    ) {
+      return `${node.data.title} requires a response value to publish.`;
     }
   }
 
@@ -313,18 +334,7 @@ function validateGraph(nodes: FlowNode[], edges: FlowEdge[], registry: WorkflowR
     adjacency.set(edge.source, [...(adjacency.get(edge.source) || []), edge.target]);
   }
 
-  const inputId = inputNodes[0].id;
-  const inputOutgoing = adjacency.get(inputId) || [];
-  if (inputOutgoing.length === 0) {
-    return "The input node must connect to at least one downstream node.";
-  }
-
-  const fromInput = reachable(inputId, adjacency);
-  if (fromInput.size !== nodes.length) {
-    const unreached = nodes.find((n) => !fromInput.has(n.id));
-    return `Node "${unreached?.data.title}" is disconnected from the workflow input.`;
-  }
-
+  // Cycle check: topological sort (enforced for both draft and publish)
   const indegree = new Map(nodes.map((node) => [node.id, 0]));
   for (const edge of edges) {
     indegree.set(edge.target, (indegree.get(edge.target) || 0) + 1);
@@ -342,6 +352,25 @@ function validateGraph(nodes: FlowNode[], edges: FlowEdge[], registry: WorkflowR
   }
   if (visitedCount !== nodes.length) {
     return "Cycles are not allowed in a workflow (must be a DAG).";
+  }
+
+  // Full executable graph validation only required on publish
+  if (isPublishing) {
+    const inputNodes = nodes.filter((node) => node.data.kind === "input");
+    if (inputNodes.length !== 1) return "A published workflow must have exactly one input node.";
+    if (nodes.length < 2) return "A published workflow must have at least one node after the input node.";
+
+    const inputId = inputNodes[0].id;
+    const inputOutgoing = adjacency.get(inputId) || [];
+    if (inputOutgoing.length === 0) {
+      return "The input node must connect to at least one downstream node.";
+    }
+
+    const fromInput = reachable(inputId, adjacency);
+    if (fromInput.size !== nodes.length) {
+      const unreached = nodes.find((n) => !fromInput.has(n.id));
+      return `Node "${unreached?.data.title}" is disconnected from the workflow input. All nodes must be connected to publish.`;
+    }
   }
 
   return null;
@@ -371,6 +400,7 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [graphDirty, setGraphDirty] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -581,6 +611,9 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
   const save = useCallback(
     async (status?: Workflow["status"]) => {
       if (!workflow || conflict || saving) return;
+      const targetStatus = status || workflow.status;
+      const isPublishing = targetStatus === "published";
+
       const changedName = workflow.name !== (savedMeta?.name || workflow.name);
       const changedDescription =
         (workflow.description || "") !== (savedMeta?.description || "");
@@ -593,7 +626,7 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
 
       let graph: { nodes: WorkflowNode[]; edges: WorkflowEdge[] } | null = null;
       if (graphDirty) {
-        const problem = validateGraph(nodes, edges, registry);
+        const problem = validateGraph(nodes, edges, registry, isPublishing);
         if (problem) {
           setFieldError(problem);
           toast.error(problem);
@@ -634,7 +667,14 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
       } catch (error) {
         if (error instanceof WorkflowApiError && error.status === 409) {
           setConflict(true);
-          toast.error("This workflow changed elsewhere. Reload the latest version before saving.");
+          const reload = window.confirm(
+            "This workflow was modified elsewhere. Would you like to reload the latest version?"
+          );
+          if (reload) {
+            void loadWorkflow();
+          } else {
+            toast.error("This workflow changed elsewhere. Reload the latest version before saving.");
+          }
         } else if (error instanceof WorkflowApiError && error.status === 404) {
           toast.error("Workflow not found. Returning to your workflow list.");
           router.replace("/workflows");
@@ -649,8 +689,26 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
         setSaving(false);
       }
     },
-    [workflow, conflict, saving, savedMeta, graphDirty, nodes, edges, registry, dark, setNodes, setEdges, router]
+    [workflow, conflict, saving, savedMeta, graphDirty, nodes, edges, registry, dark, setNodes, setEdges, router, loadWorkflow]
   );
+
+  const handleDeleteWorkflow = async () => {
+    if (!workflow || deleting) return;
+    const confirmed = window.confirm(
+      `Are you sure you want to delete "${workflow.name}"? This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setDeleting(true);
+    try {
+      await workflowsApi.delete(workflow.workflowId);
+      toast.success("Workflow deleted successfully");
+      router.replace("/workflows");
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete workflow");
+      setDeleting(false);
+    }
+  };
 
   const removeSelected = () => {
     if (!selected) return;
@@ -709,7 +767,7 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
   const handleTestRun = async () => {
     if (!workflow || testRunning) return;
     if (graphDirty || dirty) {
-      const problem = validateGraph(nodes, edges, registry);
+      const problem = validateGraph(nodes, edges, registry, false);
       if (problem) {
         toast.error(`Please fix graph validation before testing: ${problem}`);
         return;
@@ -826,6 +884,21 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
             <span className="hidden sm:inline">Test run</span>
           </button>
 
+          {/* Quick Delete button */}
+          <button
+            onClick={handleDeleteWorkflow}
+            disabled={deleting}
+            title="Delete this workflow"
+            className={`hidden rounded-xl p-2.5 sm:block transition ${
+              dark
+                ? "text-slate-400 hover:bg-rose-500/10 hover:text-rose-400"
+                : "text-slate-500 hover:bg-rose-50 hover:text-rose-600"
+            }`}
+            aria-label="Delete workflow"
+          >
+            <FiTrash2 />
+          </button>
+
           <button
             onClick={() => setSettingsOpen((value) => !value)}
             title="Workflow settings"
@@ -890,6 +963,16 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
             className={field}
             placeholder="What does this workflow do?"
           />
+          <div className="mt-4 border-t pt-4 border-slate-200 dark:border-slate-800">
+            <button
+              type="button"
+              onClick={handleDeleteWorkflow}
+              disabled={deleting}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-rose-500/20 bg-rose-500/10 py-2.5 text-xs font-bold text-rose-500 transition hover:bg-rose-500/20 disabled:opacity-50"
+            >
+              <FiTrash2 /> Delete workflow
+            </button>
+          </div>
         </div>
       )}
 
@@ -938,13 +1021,13 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
             }`}
           />
           <div className={`hidden px-2 text-[10px] leading-5 ${muted} sm:block`}>
-            <p className="font-semibold text-slate-700 dark:text-slate-300">Architecture rules:</p>
-            <p>• Output node is optional.</p>
-            <p>• Terminal agents return answers.</p>
-            <p>• Nodes connect into a DAG.</p>
+            <p className="font-semibold text-slate-700 dark:text-slate-300">Design freedom:</p>
+            <p>• Save drafts anytime.</p>
+            <p>• Output nodes optional.</p>
+            <p>• Connect into a DAG to publish.</p>
           </div>
           <span className={`mt-auto hidden items-center gap-2 px-2 text-[10px] ${muted} sm:flex`}>
-            <FiGitBranch className="text-blue-500" /> DAG · single input
+            <FiGitBranch className="text-blue-500" /> DAG · continuous save
           </span>
         </aside>
 
@@ -1766,7 +1849,7 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
           <span className="flex items-center gap-1">
             <FiGitBranch className="text-blue-500" /> Workflow builder
           </span>
-          <span>Flat canonical shape · DAG · Auto terminal response</span>
+          <span>Draft freedom · Published executable validation · DAG</span>
         </div>
         <span>{dirty ? "Unsaved changes" : "Saved"}</span>
       </div>
