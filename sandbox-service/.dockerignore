@@ -1,0 +1,15 @@
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.venv
+venv
+workspace/output/*
+!workspace/output/.gitkeep
+workspace/input/*
+!workspace/input/.gitkeep
+.git
+.gitignore
+tests
+
