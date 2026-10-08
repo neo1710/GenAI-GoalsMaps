@@ -250,15 +250,27 @@ export default function WorkflowsPage() {
                       <span className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-blue-500/15 to-indigo-500/15 text-lg text-blue-500">
                         <FiGitBranch />
                       </span>
-                      <span
-                        className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${
-                          workflow.status === "published"
-                            ? "bg-emerald-500/10 text-emerald-500"
-                            : "bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                        }`}
-                      >
-                        {workflow.status}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        {workflow.nodes?.some(
+                          (n) =>
+                            n.type === "agent" &&
+                            (n.agentType === "sandbox_agent" ||
+                              Boolean((n as unknown as { action?: string }).action))
+                        ) && (
+                          <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                            🛡️ Sandbox
+                          </span>
+                        )}
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${
+                            workflow.status === "published"
+                              ? "bg-emerald-500/10 text-emerald-500"
+                              : "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                          }`}
+                        >
+                          {workflow.status}
+                        </span>
+                      </div>
                     </div>
 
                     <Link href={`/workflows/${workflow.workflowId}`} className="block">

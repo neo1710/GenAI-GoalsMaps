@@ -57,6 +57,12 @@ function ChatView() {
   const card = darkMode ? "border-slate-800 bg-slate-900" : "border-blue-100 bg-white";
   const muted = darkMode ? "text-slate-400" : "text-slate-500";
 
+  const hasSandboxAgent = Boolean(
+    currentWorkflow?.nodes?.some(
+      (n) => n.type === "agent" && (n.agentType === "sandbox_agent" || (n as unknown as { action?: string }).action)
+    )
+  );
+
   return (
     <div className={`flex h-screen flex-col transition-colors duration-200 ${surface}`}>
       <header
@@ -144,6 +150,7 @@ function ChatView() {
           agent={currentAgent}
           workflowName={currentWorkflowName}
           workflowOwnerId={currentWorkflowOwnerId}
+          hasSandboxAgent={hasSandboxAgent}
         />
       </main>
     </div>

@@ -30,19 +30,28 @@ import {
   FiArrowLeft,
   FiCheck,
   FiChevronDown,
+  FiCode,
+  FiCopy,
   FiDatabase,
+  FiDownload,
   FiExternalLink,
+  FiFileText,
   FiGitBranch,
   FiInfo,
   FiLayers,
   FiLoader,
+  FiPaperclip,
   FiPlay,
   FiPlus,
+  FiRefreshCw,
   FiSave,
   FiSettings,
   FiShare2,
+  FiShield,
+  FiTable,
   FiTerminal,
   FiTrash2,
+  FiUploadCloud,
   FiX,
 } from "react-icons/fi";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -59,6 +68,18 @@ import {
   workflowsApi,
 } from "@/lib/workflowsApi";
 import type { ChatModel } from "@/components/ChatInput";
+import {
+  getSandboxDownloadUrl,
+  uploadSandboxFile,
+  listSandboxFiles,
+  SANDBOX_ACTIONS_INFO,
+  SYNTHETIC_TEMPLATES_INFO,
+  PYTHON_CODE_PRESETS,
+  type SandboxActionType,
+  type SyntheticTemplateType,
+  type SandboxNodeParameters,
+  type SandboxFileListResponse,
+} from "@/lib/sandboxApi";
 
 type FlowData = {
   title: string;
@@ -88,7 +109,7 @@ function getNodeRuntimeBadge(kind: WorkflowNodeType, fields: Record<string, unkn
     const at = String(fields.agentType || "prompt_agent");
     if (at === "prompt_agent") return { label: "Ready", ready: true };
     if (at === "function_call_agent") return { label: "Prompt ready · Tools reserved", ready: true, warning: true };
-    if (at === "sandbox_agent") return { label: "501 Planned", ready: false };
+    if (at === "sandbox_agent") return { label: "Ready · Sandbox 🛡️", ready: true };
     return { label: "Custom agent", ready: true };
   }
   if (kind === "tool") {
@@ -108,7 +129,11 @@ function FlowNodeCard({ data, selected }: NodeProps<FlowNode>) {
   const runtime = getNodeRuntimeBadge(data.kind, data.fields);
   const typeLabel =
     data.kind === "agent"
-      ? String(data.fields.agentType || "prompt_agent").replaceAll("_", " ")
+      ? data.fields.agentType === "sandbox_agent"
+        ? data.fields.action
+          ? `sandbox · ${String(data.fields.action).replaceAll("_", " ")}`
+          : "sandbox agent · prompt"
+        : String(data.fields.agentType || "prompt_agent").replaceAll("_", " ")
       : data.kind === "tool"
       ? String(data.fields.tool || "Choose tool").replaceAll("_", " ")
       : data.kind === "condition"
@@ -416,6 +441,54 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
   const [testResponse, setTestResponse] = useState<WorkflowChatResponse | null>(null);
   const [testError, setTestError] = useState<{ status?: number; message: string } | null>(null);
   const [activeTraceNode, setActiveTraceNode] = useState<string | null>(null);
+
+  // Sandbox workspace files & upload state
+  const [sandboxFiles, setSandboxFiles] = useState<SandboxFileListResponse | null>(null);
+  const [loadingFiles, setLoadingFiles] = useState(false);
+  const [uploadingFile, setUploadingFile] = useState(false);
+
+  const refreshSandboxFiles = useCallback(async () => {
+    setLoadingFiles(true);
+    try {
+      const res = await listSandboxFiles();
+      setSandboxFiles(res);
+    } catch {
+      // Sandbox service might not be running or reachable
+    } finally {
+      setLoadingFiles(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshSandboxFiles();
+  }, [refreshSandboxFiles]);
+
+  const handleUploadToSandbox = async (file: File) => {
+    setUploadingFile(true);
+    try {
+      const res = await uploadSandboxFile(file, "input");
+      toast.success(
+        `Uploaded "${res.filename}" (${Math.round(res.size_bytes / 1024)} KB) to sandbox workspace input/`
+      );
+      await refreshSandboxFiles();
+      return res;
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Upload failed");
+      throw err;
+    } finally {
+      setUploadingFile(false);
+    }
+  };
+
+  const hasSandboxAgentNode = useMemo(
+    () =>
+      nodes.some(
+        (n) =>
+          n.data.kind === "agent" &&
+          (n.data.fields.agentType === "sandbox_agent" || Boolean(n.data.fields.action))
+      ),
+    [nodes]
+  );
 
   const { screenToFlowPosition, fitView } = useReactFlow();
   const selected = nodes.find((node) => node.id === selectedId) || null;
@@ -1284,82 +1357,877 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
                         </p>
                       </div>
 
-                      {selected.data.fields.agentType === "sandbox_agent" && (
-                        <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-[11px] leading-5 text-amber-600 dark:text-amber-400">
-                          <span className="font-bold">501 Not Implemented:</span> Sandbox agents can be
-                          saved in workflow JSON today, but will return 501 during test runs until dedicated
-                          runtime execution is added.
+                      {selected.data.fields.agentType === "sandbox_agent" ? (
+                        <div className="space-y-4">
+                          {/* Sandbox Banner */}
+                          <div className="flex items-start gap-2.5 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-3.5 text-xs text-emerald-700 dark:text-emerald-400">
+                            <FiShield className="text-lg shrink-0 mt-0.5 text-emerald-500" />
+                            <div>
+                              <p className="font-bold flex items-center gap-1.5">
+                                <span>Python 3.12 Sandbox Agent</span>
+                                <span className="rounded bg-emerald-500/20 px-1.5 py-0.2 text-[9px] font-bold text-emerald-600 dark:text-emerald-300">
+                                  Active
+                                </span>
+                              </p>
+                              <p className="text-[11px] leading-4 opacity-85 mt-0.5">
+                                Isolated Linux sandbox environment with <code className="font-mono">pandas</code>, <code className="font-mono">numpy</code>, and filesystem access to <code className="font-mono">input/</code> and <code className="font-mono">output/</code>.
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Execution Mode */}
+                          <div>
+                            <label className={`mb-1.5 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                              Execution Mode
+                            </label>
+                            <div className={`grid grid-cols-2 gap-1 rounded-xl border p-1 ${dark ? "border-slate-800 bg-slate-950" : "border-slate-200 bg-slate-100"}`}>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const currentParams = (selected.data.fields.parameters as Record<string, unknown>) || {};
+                                  updateFields(selected.id, {
+                                    mode: "direct",
+                                    action: selected.data.fields.action || "create_synthetic_csv",
+                                    parameters: Object.keys(currentParams).length > 0 ? currentParams : {
+                                      filename: "q3_goals.csv",
+                                      template: "goals_and_milestones",
+                                      row_count: 25,
+                                      seed: 42,
+                                    },
+                                  });
+                                }}
+                                className={`rounded-lg py-1.5 text-xs font-bold transition ${
+                                  selected.data.fields.mode !== "ai" && (selected.data.fields.action || !selected.data.fields.prompt)
+                                    ? "bg-blue-600 text-white shadow-sm"
+                                    : muted
+                                }`}
+                              >
+                                ● Direct Action
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  updateFields(selected.id, {
+                                    mode: "ai",
+                                    action: undefined,
+                                    prompt: selected.data.fields.prompt || "Inspect output/q3_goals.csv and find all goals with progress less than 30%. Return a summary table. Question: {{Question.output.message}}",
+                                  });
+                                }}
+                                className={`rounded-lg py-1.5 text-xs font-bold transition ${
+                                  selected.data.fields.mode === "ai" || (!selected.data.fields.action && Boolean(selected.data.fields.prompt))
+                                    ? "bg-blue-600 text-white shadow-sm"
+                                    : muted
+                                }`}
+                              >
+                                ○ AI-Driven Mode
+                              </button>
+                            </div>
+                            <p className={`mt-1 text-[10px] ${muted}`}>
+                              {selected.data.fields.mode === "ai" || (!selected.data.fields.action && Boolean(selected.data.fields.prompt))
+                                ? "AI-Driven: LLM autonomously writes Python scripts, queries datasets, and solves user requests."
+                                : "Direct Action: Deterministic, fast execution of specific CSV tools or custom Python scripts."}
+                            </p>
+                          </div>
+
+                          {/* Direct Action Mode Controls */}
+                          {selected.data.fields.mode !== "ai" && (selected.data.fields.action || !selected.data.fields.prompt) ? (
+                            <div className="space-y-4">
+                              {/* Action Dropdown */}
+                              <div>
+                                <label className={`mb-1.5 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                                  Sandbox Action <span className="text-rose-500">*</span>
+                                </label>
+                                <select
+                                  value={String(selected.data.fields.action || "create_synthetic_csv")}
+                                  onChange={(e) => {
+                                    const act = e.target.value as SandboxActionType;
+                                    let defaultParams: Record<string, unknown> = {};
+                                    if (act === "create_synthetic_csv") {
+                                      defaultParams = {
+                                        filename: "q3_goals.csv",
+                                        template: "goals_and_milestones",
+                                        row_count: 25,
+                                        seed: 42,
+                                      };
+                                    } else if (act === "analyze_csv") {
+                                      defaultParams = {
+                                        filename: "q3_goals.csv",
+                                        generate_markdown_report: true,
+                                        top_correlations_count: 5,
+                                      };
+                                    } else if (act === "query_csv") {
+                                      defaultParams = {
+                                        filename: "q3_goals.csv",
+                                        filter_expression: "progress_pct >= 50 and priority == 'Critical'",
+                                        columns: ["goal_id", "title", "status", "progress_pct", "assigned_owner"],
+                                        sort_by: "progress_pct",
+                                        ascending: false,
+                                        limit: 50,
+                                        save_result_to: "critical_goals.csv",
+                                      };
+                                    } else if (act === "execute_python") {
+                                      defaultParams = {
+                                        code: PYTHON_CODE_PRESETS[0].code,
+                                        timeout_seconds: 30,
+                                      };
+                                    } else if (act === "create_csv") {
+                                      defaultParams = {
+                                        filename: "records.csv",
+                                        data: [
+                                          { id: 1, name: "Sample Milestone", progress: 80, owner: "Alex" },
+                                          { id: 2, name: "Database Optimization", progress: 45, owner: "Sam" },
+                                        ],
+                                        delimiter: ",",
+                                      };
+                                    }
+                                    updateFields(selected.id, { action: act, parameters: defaultParams });
+                                  }}
+                                  className={field}
+                                >
+                                  {Object.entries(SANDBOX_ACTIONS_INFO).map(([actKey, actInfo]) => (
+                                    <option key={actKey} value={actKey}>
+                                      {actInfo.icon} {actKey} ({actInfo.label})
+                                    </option>
+                                  ))}
+                                </select>
+                                <p className={`mt-1.5 text-[10px] leading-4 ${muted}`}>
+                                  {SANDBOX_ACTIONS_INFO[selected.data.fields.action as SandboxActionType]?.description ||
+                                    "Select an action to execute in the sandbox."}
+                                </p>
+                              </div>
+
+                              {/* Action: create_synthetic_csv */}
+                              {selected.data.fields.action === "create_synthetic_csv" && (
+                                <div className="space-y-3 rounded-2xl border p-3.5 border-inherit bg-inherit">
+                                  <div>
+                                    <label className={`mb-1 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                                      Output Filename <span className="text-rose-500">*</span>
+                                    </label>
+                                    <input
+                                      value={String((selected.data.fields.parameters as Record<string, unknown>)?.filename || "q3_goals.csv")}
+                                      onChange={(e) => {
+                                        const p = { ...(selected.data.fields.parameters as Record<string, unknown>), filename: e.target.value };
+                                        updateFields(selected.id, { parameters: p });
+                                      }}
+                                      className={field}
+                                      placeholder="e.g. q3_goals.csv"
+                                    />
+                                    <p className={`mt-1 text-[9px] ${muted}`}>Saved in workspace <code className="font-mono text-emerald-500">output/</code></p>
+                                  </div>
+
+                                  <div>
+                                    <label className={`mb-1 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                                      Synthetic Template
+                                    </label>
+                                    <select
+                                      value={String((selected.data.fields.parameters as Record<string, unknown>)?.template || "goals_and_milestones")}
+                                      onChange={(e) => {
+                                        const p = { ...(selected.data.fields.parameters as Record<string, unknown>), template: e.target.value };
+                                        updateFields(selected.id, { parameters: p });
+                                      }}
+                                      className={field}
+                                    >
+                                      {Object.entries(SYNTHETIC_TEMPLATES_INFO).map(([tKey, tInfo]) => (
+                                        <option key={tKey} value={tKey}>
+                                          {tInfo.label} ({tKey})
+                                        </option>
+                                      ))}
+                                    </select>
+                                    {SYNTHETIC_TEMPLATES_INFO[(selected.data.fields.parameters as Record<string, unknown>)?.template as SyntheticTemplateType] && (
+                                      <div className="mt-2 rounded-xl bg-blue-500/5 border border-blue-500/10 p-2 text-[10px] space-y-1">
+                                        <p className="font-semibold text-blue-600 dark:text-blue-400">
+                                          {SYNTHETIC_TEMPLATES_INFO[(selected.data.fields.parameters as Record<string, unknown>)?.template as SyntheticTemplateType].description}
+                                        </p>
+                                        <p className="font-mono text-[9px] text-slate-500 leading-4">
+                                          Columns: {SYNTHETIC_TEMPLATES_INFO[(selected.data.fields.parameters as Record<string, unknown>)?.template as SyntheticTemplateType].columns}
+                                        </p>
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                      <label className={`mb-1 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                                        Row Count
+                                      </label>
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        max={5000}
+                                        value={Number((selected.data.fields.parameters as Record<string, unknown>)?.row_count ?? 25)}
+                                        onChange={(e) => {
+                                          const p = { ...(selected.data.fields.parameters as Record<string, unknown>), row_count: Number(e.target.value) };
+                                          updateFields(selected.id, { parameters: p });
+                                        }}
+                                        className={field}
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className={`mb-1 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                                        Random Seed
+                                      </label>
+                                      <input
+                                        type="number"
+                                        value={Number((selected.data.fields.parameters as Record<string, unknown>)?.seed ?? 42)}
+                                        onChange={(e) => {
+                                          const p = { ...(selected.data.fields.parameters as Record<string, unknown>), seed: Number(e.target.value) };
+                                          updateFields(selected.id, { parameters: p });
+                                        }}
+                                        className={field}
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Action: analyze_csv */}
+                              {selected.data.fields.action === "analyze_csv" && (
+                                <div className="space-y-3 rounded-2xl border p-3.5 border-inherit bg-inherit">
+                                  <div>
+                                    <div className="flex items-center justify-between mb-1">
+                                      <label className={`block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                                        CSV Filename <span className="text-rose-500">*</span>
+                                      </label>
+                                      {((sandboxFiles?.output?.length ?? 0) > 0 || (sandboxFiles?.input?.length ?? 0) > 0) && (
+                                        <span className="text-[10px] text-blue-500 font-semibold">
+                                          Pick workspace file ↓
+                                        </span>
+                                      )}
+                                    </div>
+                                    <input
+                                      value={String((selected.data.fields.parameters as Record<string, unknown>)?.filename || "q3_goals.csv")}
+                                      onChange={(e) => {
+                                        const p = { ...(selected.data.fields.parameters as Record<string, unknown>), filename: e.target.value };
+                                        updateFields(selected.id, { parameters: p });
+                                      }}
+                                      className={field}
+                                      placeholder="e.g. q3_goals.csv or input/my_data.csv"
+                                    />
+                                    {((sandboxFiles?.output?.length ?? 0) > 0 || (sandboxFiles?.input?.length ?? 0) > 0) && (
+                                      <div className="mt-2 flex flex-wrap gap-1">
+                                        {[
+                                          ...(sandboxFiles?.output ?? []).map((f) => ({ ...f, folder: "output" as const })),
+                                          ...(sandboxFiles?.input ?? []).map((f) => ({ ...f, folder: "input" as const })),
+                                        ].slice(0, 5).map((f) => {
+                                          const path = `${f.folder}/${f.name}`;
+                                          return (
+                                            <button
+                                              key={path}
+                                              type="button"
+                                              onClick={() => {
+                                                const p = { ...(selected.data.fields.parameters as Record<string, unknown>), filename: path };
+                                                updateFields(selected.id, { parameters: p });
+                                              }}
+                                              className="rounded bg-slate-100 px-2 py-0.5 font-mono text-[9px] text-slate-700 hover:bg-blue-100 hover:text-blue-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                                            >
+                                              {f.name} ({f.folder}/)
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  <div className="flex items-center justify-between pt-1">
+                                    <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold">
+                                      <input
+                                        type="checkbox"
+                                        checked={Boolean((selected.data.fields.parameters as Record<string, unknown>)?.generate_markdown_report ?? true)}
+                                        onChange={(e) => {
+                                          const p = { ...(selected.data.fields.parameters as Record<string, unknown>), generate_markdown_report: e.target.checked };
+                                          updateFields(selected.id, { parameters: p });
+                                        }}
+                                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-4 w-4"
+                                      />
+                                      <span>Generate Markdown Report</span>
+                                    </label>
+                                  </div>
+
+                                  <div>
+                                    <label className={`mb-1 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                                      Top Correlations Count
+                                    </label>
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      max={20}
+                                      value={Number((selected.data.fields.parameters as Record<string, unknown>)?.top_correlations_count ?? 5)}
+                                      onChange={(e) => {
+                                        const p = { ...(selected.data.fields.parameters as Record<string, unknown>), top_correlations_count: Number(e.target.value) };
+                                        updateFields(selected.id, { parameters: p });
+                                      }}
+                                      className={field}
+                                    />
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Action: query_csv */}
+                              {selected.data.fields.action === "query_csv" && (
+                                <div className="space-y-3 rounded-2xl border p-3.5 border-inherit bg-inherit">
+                                  <div>
+                                    <div className="flex items-center justify-between mb-1">
+                                      <label className={`block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                                        CSV Filename <span className="text-rose-500">*</span>
+                                      </label>
+                                      {((sandboxFiles?.output?.length ?? 0) > 0 || (sandboxFiles?.input?.length ?? 0) > 0) && (
+                                        <span className="text-[10px] text-blue-500 font-semibold">
+                                          Pick workspace file ↓
+                                        </span>
+                                      )}
+                                    </div>
+                                    <input
+                                      value={String((selected.data.fields.parameters as Record<string, unknown>)?.filename || "q3_goals.csv")}
+                                      onChange={(e) => {
+                                        const p = { ...(selected.data.fields.parameters as Record<string, unknown>), filename: e.target.value };
+                                        updateFields(selected.id, { parameters: p });
+                                      }}
+                                      className={field}
+                                      placeholder="e.g. q3_goals.csv or input/my_data.csv"
+                                    />
+                                    {((sandboxFiles?.output?.length ?? 0) > 0 || (sandboxFiles?.input?.length ?? 0) > 0) && (
+                                      <div className="mt-2 flex flex-wrap gap-1">
+                                        {[
+                                          ...(sandboxFiles?.output ?? []).map((f) => ({ ...f, folder: "output" as const })),
+                                          ...(sandboxFiles?.input ?? []).map((f) => ({ ...f, folder: "input" as const })),
+                                        ].slice(0, 5).map((f) => {
+                                          const path = `${f.folder}/${f.name}`;
+                                          return (
+                                            <button
+                                              key={path}
+                                              type="button"
+                                              onClick={() => {
+                                                const p = { ...(selected.data.fields.parameters as Record<string, unknown>), filename: path };
+                                                updateFields(selected.id, { parameters: p });
+                                              }}
+                                              className="rounded bg-slate-100 px-2 py-0.5 font-mono text-[9px] text-slate-700 hover:bg-blue-100 hover:text-blue-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                                            >
+                                              {f.name} ({f.folder}/)
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  <div>
+                                    <label className={`mb-1 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                                      Filter Expression (SQL-like / boolean)
+                                    </label>
+                                    <input
+                                      value={String((selected.data.fields.parameters as Record<string, unknown>)?.filter_expression || "")}
+                                      onChange={(e) => {
+                                        const p = { ...(selected.data.fields.parameters as Record<string, unknown>), filter_expression: e.target.value };
+                                        updateFields(selected.id, { parameters: p });
+                                      }}
+                                      className={`${field} font-mono text-xs`}
+                                      placeholder="progress_pct >= 50 and priority == 'Critical'"
+                                    />
+                                    <p className={`mt-1 text-[9px] ${muted}`}>Supports boolean conditions, comparison operators, and template variables</p>
+                                  </div>
+
+                                  <div>
+                                    <label className={`mb-1 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                                      Columns (Comma-separated)
+                                    </label>
+                                    <input
+                                      value={
+                                        Array.isArray((selected.data.fields.parameters as Record<string, unknown>)?.columns)
+                                          ? ((selected.data.fields.parameters as Record<string, unknown>)?.columns as string[]).join(", ")
+                                          : String((selected.data.fields.parameters as Record<string, unknown>)?.columns || "")
+                                      }
+                                      onChange={(e) => {
+                                        const cols = e.target.value.split(",").map((s) => s.trim()).filter(Boolean);
+                                        const p = { ...(selected.data.fields.parameters as Record<string, unknown>), columns: cols };
+                                        updateFields(selected.id, { parameters: p });
+                                      }}
+                                      className={`${field} font-mono text-xs`}
+                                      placeholder="goal_id, title, status, progress_pct, assigned_owner"
+                                    />
+                                  </div>
+
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                      <label className={`mb-1 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                                        Sort By Column
+                                      </label>
+                                      <input
+                                        value={String((selected.data.fields.parameters as Record<string, unknown>)?.sort_by || "")}
+                                        onChange={(e) => {
+                                          const p = { ...(selected.data.fields.parameters as Record<string, unknown>), sort_by: e.target.value };
+                                          updateFields(selected.id, { parameters: p });
+                                        }}
+                                        className={field}
+                                        placeholder="e.g. progress_pct"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className={`mb-1 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                                        Sort Direction
+                                      </label>
+                                      <select
+                                        value={((selected.data.fields.parameters as Record<string, unknown>)?.ascending ?? false) ? "asc" : "desc"}
+                                        onChange={(e) => {
+                                          const p = { ...(selected.data.fields.parameters as Record<string, unknown>), ascending: e.target.value === "asc" };
+                                          updateFields(selected.id, { parameters: p });
+                                        }}
+                                        className={field}
+                                      >
+                                        <option value="desc">Descending (High to Low)</option>
+                                        <option value="asc">Ascending (Low to High)</option>
+                                      </select>
+                                    </div>
+                                  </div>
+
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                      <label className={`mb-1 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                                        Row Limit
+                                      </label>
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        max={1000}
+                                        value={Number((selected.data.fields.parameters as Record<string, unknown>)?.limit ?? 50)}
+                                        onChange={(e) => {
+                                          const p = { ...(selected.data.fields.parameters as Record<string, unknown>), limit: Number(e.target.value) };
+                                          updateFields(selected.id, { parameters: p });
+                                        }}
+                                        className={field}
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className={`mb-1 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                                        Save Result To (Optional)
+                                      </label>
+                                      <input
+                                        value={String((selected.data.fields.parameters as Record<string, unknown>)?.save_result_to || "")}
+                                        onChange={(e) => {
+                                          const p = { ...(selected.data.fields.parameters as Record<string, unknown>), save_result_to: e.target.value };
+                                          updateFields(selected.id, { parameters: p });
+                                        }}
+                                        className={field}
+                                        placeholder="e.g. filtered_goals.csv"
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Action: execute_python */}
+                              {selected.data.fields.action === "execute_python" && (
+                                <div className="space-y-3 rounded-2xl border p-3.5 border-inherit bg-inherit">
+                                  <div className="flex items-center justify-between">
+                                    <label className={`block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                                      Python 3.12 Script <span className="text-rose-500">*</span>
+                                    </label>
+                                    <select
+                                      onChange={(e) => {
+                                        const preset = PYTHON_CODE_PRESETS.find((p) => p.name === e.target.value);
+                                        if (preset) {
+                                          const p = { ...(selected.data.fields.parameters as Record<string, unknown>), code: preset.code };
+                                          updateFields(selected.id, { parameters: p, code: preset.code });
+                                        }
+                                      }}
+                                      className="text-[10px] font-semibold bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded-lg px-2 py-1 outline-none"
+                                    >
+                                      <option value="">Load code preset…</option>
+                                      {PYTHON_CODE_PRESETS.map((preset) => (
+                                        <option key={preset.name} value={preset.name}>
+                                          {preset.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+
+                                  <textarea
+                                    value={String(
+                                      (selected.data.fields.parameters as Record<string, unknown>)?.code ||
+                                      selected.data.fields.code ||
+                                      PYTHON_CODE_PRESETS[0].code
+                                    )}
+                                    onChange={(e) => {
+                                      const p = { ...(selected.data.fields.parameters as Record<string, unknown>), code: e.target.value };
+                                      updateFields(selected.id, { parameters: p, code: e.target.value });
+                                    }}
+                                    rows={9}
+                                    className={`${field} font-mono text-[11px] leading-5 whitespace-pre`}
+                                    placeholder="import pandas as pd&#10;df = pd.read_csv('output/q3_goals.csv')&#10;print(df.head())"
+                                  />
+                                  <p className={`text-[10px] ${muted}`}>
+                                    Filesystem paths: <code className="font-mono">input/</code> (user uploads) and <code className="font-mono">output/</code> (generated outputs).
+                                  </p>
+
+                                  <div>
+                                    <label className={`mb-1 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                                      Execution Timeout (Seconds)
+                                    </label>
+                                    <input
+                                      type="number"
+                                      min={5}
+                                      max={120}
+                                      value={Number((selected.data.fields.parameters as Record<string, unknown>)?.timeout_seconds ?? 30)}
+                                      onChange={(e) => {
+                                        const p = { ...(selected.data.fields.parameters as Record<string, unknown>), timeout_seconds: Number(e.target.value) };
+                                        updateFields(selected.id, { parameters: p });
+                                      }}
+                                      className={field}
+                                    />
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Action: create_csv */}
+                              {selected.data.fields.action === "create_csv" && (
+                                <div className="space-y-3 rounded-2xl border p-3.5 border-inherit bg-inherit">
+                                  <div>
+                                    <label className={`mb-1 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                                      Target Filename <span className="text-rose-500">*</span>
+                                    </label>
+                                    <input
+                                      value={String((selected.data.fields.parameters as Record<string, unknown>)?.filename || "data.csv")}
+                                      onChange={(e) => {
+                                        const p = { ...(selected.data.fields.parameters as Record<string, unknown>), filename: e.target.value };
+                                        updateFields(selected.id, { parameters: p });
+                                      }}
+                                      className={field}
+                                      placeholder="e.g. data.csv"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className={`mb-1 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                                      JSON Data Records <span className="text-rose-500">*</span>
+                                    </label>
+                                    <textarea
+                                      value={
+                                        typeof (selected.data.fields.parameters as Record<string, unknown>)?.data === "string"
+                                          ? String((selected.data.fields.parameters as Record<string, unknown>)?.data)
+                                          : JSON.stringify(
+                                              (selected.data.fields.parameters as Record<string, unknown>)?.data || [
+                                                { id: 1, name: "Sample", value: 100 },
+                                              ],
+                                              null,
+                                              2
+                                            )
+                                      }
+                                      onChange={(e) => {
+                                        try {
+                                          const parsed = JSON.parse(e.target.value);
+                                          const p = { ...(selected.data.fields.parameters as Record<string, unknown>), data: parsed };
+                                          updateFields(selected.id, { parameters: p });
+                                        } catch {
+                                          const p = { ...(selected.data.fields.parameters as Record<string, unknown>), data: e.target.value };
+                                          updateFields(selected.id, { parameters: p });
+                                        }
+                                      }}
+                                      rows={6}
+                                      className={`${field} font-mono text-xs`}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className={`mb-1 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                                      Delimiter
+                                    </label>
+                                    <input
+                                      value={String((selected.data.fields.parameters as Record<string, unknown>)?.delimiter || ",")}
+                                      onChange={(e) => {
+                                        const p = { ...(selected.data.fields.parameters as Record<string, unknown>), delimiter: e.target.value };
+                                        updateFields(selected.id, { parameters: p });
+                                      }}
+                                      className={field}
+                                      placeholder=","
+                                    />
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Action: list_files */}
+                              {selected.data.fields.action === "list_files" && (
+                                <div className="rounded-2xl border p-3 text-xs border-inherit bg-blue-500/5 text-blue-600 dark:text-blue-400">
+                                  <p className="font-bold flex items-center gap-1.5">
+                                    <FiInfo /> Workspace File Inspection
+                                  </p>
+                                  <p className="mt-1 opacity-90 leading-4">
+                                    When executed, this node returns a JSON map of all available files in sandbox <code className="font-mono">input/</code> and <code className="font-mono">output/</code> directories, including file sizes and modification timestamps.
+                                  </p>
+                                </div>
+                              )}
+
+                              {/* Optional Prompt / Synthesis Instructions */}
+                              <div>
+                                <label className={`mb-1.5 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                                  Optional Prompt / Synthesis Instructions
+                                </label>
+                                <textarea
+                                  value={String(selected.data.fields.prompt || "")}
+                                  onChange={(e) => updateFields(selected.id, { prompt: e.target.value })}
+                                  rows={2}
+                                  className={field}
+                                  placeholder="e.g. Summarize the key milestone dates from this data"
+                                />
+                                <p className={`mt-1 text-[10px] ${muted}`}>
+                                  If provided, downstream nodes can read LLM reasoning from <code className="text-blue-500">{`{{${selected.data.title}.output.summary}}`}</code>.
+                                </p>
+                              </div>
+
+                              {/* Embedded Workspace File Manager & Uploader */}
+                              <div className={`rounded-2xl border p-3 space-y-2.5 ${dark ? "border-slate-800 bg-slate-900/60" : "border-slate-200 bg-slate-50/70"}`}>
+                                <div className="flex items-center justify-between">
+                                  <span className="font-bold text-xs flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
+                                    <FiUploadCloud className="text-blue-500" />
+                                    <span>Workspace Datasets</span>
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => void refreshSandboxFiles()}
+                                    disabled={loadingFiles}
+                                    title="Refresh workspace files"
+                                    className="rounded p-1 text-slate-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-slate-800"
+                                  >
+                                    <FiRefreshCw className={`text-xs ${loadingFiles ? "animate-spin" : ""}`} />
+                                  </button>
+                                </div>
+
+                                {/* Upload input button */}
+                                <div>
+                                  <label
+                                    htmlFor={`sandbox-drawer-upload-${selected.id}`}
+                                    className={`flex items-center justify-center gap-2 w-full rounded-xl border border-dashed py-2 px-3 text-xs font-bold cursor-pointer transition ${
+                                      uploadingFile
+                                        ? "border-emerald-500 bg-emerald-500/10 text-emerald-500"
+                                        : dark
+                                        ? "border-slate-700 hover:border-blue-500 hover:bg-slate-800 text-slate-300"
+                                        : "border-slate-300 hover:border-blue-500 hover:bg-blue-50 text-slate-700"
+                                    }`}
+                                  >
+                                    {uploadingFile ? (
+                                      <>
+                                        <FiLoader className="animate-spin text-sm" />
+                                        <span>Uploading dataset to sandbox input/…</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <FiPaperclip className="text-sm" />
+                                        <span>Upload CSV to sandbox (input/)</span>
+                                      </>
+                                    )}
+                                  </label>
+                                  <input
+                                    id={`sandbox-drawer-upload-${selected.id}`}
+                                    type="file"
+                                    accept=".csv,.txt,.json,.py,.tsv,.xlsx"
+                                    className="hidden"
+                                    onChange={async (e) => {
+                                      const file = e.target.files?.[0];
+                                      if (file) {
+                                        const res = await handleUploadToSandbox(file);
+                                        if (res) {
+                                          const currParams = (selected.data.fields.parameters as Record<string, unknown>) || {};
+                                          updateFields(selected.id, {
+                                            parameters: {
+                                              ...currParams,
+                                              filename: `input/${res.filename}`,
+                                            },
+                                          });
+                                        }
+                                      }
+                                    }}
+                                  />
+                                </div>
+
+                                {/* Files List in drawer */}
+                                {((sandboxFiles?.input?.length ?? 0) > 0 || (sandboxFiles?.output?.length ?? 0) > 0) ? (
+                                  <div className="space-y-1.5 max-h-36 overflow-y-auto pt-1">
+                                    {[
+                                      ...(sandboxFiles?.input ?? []).map((f) => ({ ...f, folder: "input" as const })),
+                                      ...(sandboxFiles?.output ?? []).map((f) => ({ ...f, folder: "output" as const })),
+                                    ].map((f) => {
+                                      const relPath = `${f.folder}/${f.name}`;
+                                      const downloadUrl = getSandboxDownloadUrl(f.folder, f.name);
+                                      return (
+                                        <div
+                                          key={relPath}
+                                          className="flex items-center justify-between rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-2 py-1 text-[11px]"
+                                        >
+                                          <div className="flex items-center gap-1.5 min-w-0">
+                                            <FiFileText className="text-emerald-500 shrink-0 text-xs" />
+                                            <span className="truncate font-semibold">{f.name}</span>
+                                            <span className="text-[9px] opacity-60 font-mono">({f.folder}/)</span>
+                                          </div>
+                                          <div className="flex items-center gap-1 shrink-0 ml-2">
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                const currParams = (selected.data.fields.parameters as Record<string, unknown>) || {};
+                                                updateFields(selected.id, {
+                                                  parameters: { ...currParams, filename: relPath },
+                                                });
+                                                toast.success(`Set filename to ${relPath}`);
+                                              }}
+                                              title="Use as filename in parameters"
+                                              className="rounded px-1.5 py-0.5 text-[9px] font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20"
+                                            >
+                                              Use
+                                            </button>
+                                            <a
+                                              href={downloadUrl}
+                                              download={f.name}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              title="Download file"
+                                              className="rounded p-1 text-slate-400 hover:text-emerald-500"
+                                            >
+                                              <FiDownload className="text-xs" />
+                                            </a>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                ) : (
+                                  <p className={`text-[10px] text-center py-1 ${muted}`}>
+                                    No files yet in sandbox workspace.
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          ) : (
+                            /* AI-Driven Prompt Mode */
+                            <div className="space-y-4">
+                              {/* Provider & Model Selectors */}
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label className={`mb-1.5 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                                    Provider
+                                  </label>
+                                  <select
+                                    value={String(selected.data.fields.provider || "")}
+                                    onChange={(event) =>
+                                      updateFields(selected.id, { provider: event.target.value || undefined })
+                                    }
+                                    className={field}
+                                  >
+                                    <option value="">Default</option>
+                                    <option value="groq">Groq</option>
+                                    <option value="mistral">Mistral</option>
+                                  </select>
+                                </div>
+                                <div>
+                                  <label className={`mb-1.5 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                                    Model
+                                  </label>
+                                  <select
+                                    value={String(selected.data.fields.model || "")}
+                                    onChange={(event) => {
+                                      const chosen = models.find((m) => m.id === event.target.value);
+                                      updateFields(selected.id, {
+                                        model: event.target.value || undefined,
+                                        ...(chosen?.provider && { provider: chosen.provider }),
+                                      });
+                                    }}
+                                    className={field}
+                                  >
+                                    <option value="">Default</option>
+                                    {models.map((model) => (
+                                      <option key={`${model.provider || "m"}-${model.id}`} value={model.id}>
+                                        {model.id} {model.provider ? `(${model.provider})` : ""}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              </div>
+
+                              {/* Prompt */}
+                              <div>
+                                <label className={`mb-1.5 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                                  AI Data Scientist Prompt <span className="text-rose-500">*</span>
+                                </label>
+                                <textarea
+                                  value={String(selected.data.fields.prompt || "")}
+                                  onChange={(event) => updateFields(selected.id, { prompt: event.target.value })}
+                                  rows={6}
+                                  className={field}
+                                  placeholder="Inspect output/q3_goals.csv and find all goals with progress less than 30%. Return a summary table. Question: {{Question.output.message}}"
+                                />
+                                <p className={`mt-1.5 text-[10px] leading-4 ${muted}`}>
+                                  The LLM will autonomously write Python code or use CSV tools in the sandbox to answer.
+                                </p>
+                              </div>
+                            </div>
+                          )}
                         </div>
+                      ) : (
+                        <>
+                          {selected.data.fields.agentType === "function_call_agent" && (
+                            <div className="rounded-xl border border-blue-500/20 bg-blue-500/10 p-3 text-[11px] leading-5 text-blue-600 dark:text-blue-400">
+                              <span className="font-bold">Notice:</span> Executes as a model node. Autonomous
+                              tool calls will be enabled in a future runtime update; connect explicit tool nodes
+                              in your DAG for now.
+                            </div>
+                          )}
+
+                          {/* Provider & Model Selectors */}
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className={`mb-1.5 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                                Provider
+                              </label>
+                              <select
+                                value={String(selected.data.fields.provider || "")}
+                                onChange={(event) =>
+                                  updateFields(selected.id, { provider: event.target.value || undefined })
+                                }
+                                className={field}
+                              >
+                                <option value="">Default</option>
+                                <option value="groq">Groq</option>
+                                <option value="mistral">Mistral</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className={`mb-1.5 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                                Model
+                              </label>
+                              <select
+                                value={String(selected.data.fields.model || "")}
+                                onChange={(event) => {
+                                  const chosen = models.find((m) => m.id === event.target.value);
+                                  updateFields(selected.id, {
+                                    model: event.target.value || undefined,
+                                    ...(chosen?.provider && { provider: chosen.provider }),
+                                  });
+                                }}
+                                className={field}
+                              >
+                                <option value="">Default</option>
+                                {models.map((model) => (
+                                  <option key={`${model.provider || "m"}-${model.id}`} value={model.id}>
+                                    {model.id} {model.provider ? `(${model.provider})` : ""}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+
+                          {/* Prompt */}
+                          <div>
+                            <label className={`mb-1.5 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
+                              Prompt template
+                            </label>
+                            <textarea
+                              value={String(selected.data.fields.prompt || "")}
+                              onChange={(event) =>
+                                updateFields(selected.id, { prompt: event.target.value })
+                              }
+                              rows={6}
+                              className={field}
+                              placeholder={
+                                'Rewrite the user\'s question as a short search query:\n\nQuestion: {{Question.output.message}}'
+                              }
+                            />
+                          </div>
+                        </>
                       )}
-
-                      {selected.data.fields.agentType === "function_call_agent" && (
-                        <div className="rounded-xl border border-blue-500/20 bg-blue-500/10 p-3 text-[11px] leading-5 text-blue-600 dark:text-blue-400">
-                          <span className="font-bold">Notice:</span> Executes as a model node. Autonomous
-                          tool calls will be enabled in a future runtime update; connect explicit tool nodes
-                          in your DAG for now.
-                        </div>
-                      )}
-
-                      {/* Provider & Model Selectors */}
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className={`mb-1.5 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
-                            Provider
-                          </label>
-                          <select
-                            value={String(selected.data.fields.provider || "")}
-                            onChange={(event) =>
-                              updateFields(selected.id, { provider: event.target.value || undefined })
-                            }
-                            className={field}
-                          >
-                            <option value="">Default</option>
-                            <option value="groq">Groq</option>
-                            <option value="mistral">Mistral</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className={`mb-1.5 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
-                            Model
-                          </label>
-                          <select
-                            value={String(selected.data.fields.model || "")}
-                            onChange={(event) => {
-                              const chosen = models.find((m) => m.id === event.target.value);
-                              updateFields(selected.id, {
-                                model: event.target.value || undefined,
-                                ...(chosen?.provider && { provider: chosen.provider }),
-                              });
-                            }}
-                            className={field}
-                          >
-                            <option value="">Default</option>
-                            {models.map((model) => (
-                              <option key={`${model.provider || "m"}-${model.id}`} value={model.id}>
-                                {model.id} {model.provider ? `(${model.provider})` : ""}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-
-                      {/* Prompt */}
-                      <div>
-                        <label className={`mb-1.5 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
-                          Prompt template
-                        </label>
-                        <textarea
-                          value={String(selected.data.fields.prompt || "")}
-                          onChange={(event) =>
-                            updateFields(selected.id, { prompt: event.target.value })
-                          }
-                          rows={6}
-                          className={field}
-                          placeholder={
-                            'Rewrite the user\'s question as a short search query:\n\nQuestion: {{Question.output.message}}'
-                          }
-                        />
-                      </div>
 
                       {/* Allowed tools for function_call_agent */}
                       {selected.data.fields.agentType === "function_call_agent" && (
@@ -1649,6 +2517,45 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
               </button>
             </div>
 
+            {/* Quick Sandbox Upload in Test Panel */}
+            {hasSandboxAgentNode && (
+              <div className="border-b border-inherit p-3.5 bg-emerald-500/5">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+                    <FiShield /> Sandbox Test Dataset
+                  </span>
+                  <span className="text-[10px] text-slate-400">
+                    {sandboxFiles?.input?.length ?? 0} file(s) in input/
+                  </span>
+                </div>
+                <label
+                  htmlFor="sandbox-test-upload"
+                  className={`flex items-center justify-center gap-2 rounded-xl border border-dashed py-1.5 px-3 text-xs font-semibold cursor-pointer transition ${
+                    uploadingFile
+                      ? "border-emerald-500 bg-emerald-500/10 text-emerald-500"
+                      : dark
+                      ? "border-slate-700 hover:border-emerald-500 hover:bg-slate-800 text-slate-300"
+                      : "border-slate-300 hover:border-emerald-500 hover:bg-white text-slate-700"
+                  }`}
+                >
+                  <FiPaperclip className="text-xs" />
+                  <span>{uploadingFile ? "Uploading to input/…" : "Upload test dataset to input/"}</span>
+                </label>
+                <input
+                  id="sandbox-test-upload"
+                  type="file"
+                  accept=".csv,.txt,.json,.py,.tsv,.xlsx"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0];
+                    if (f) {
+                      await handleUploadToSandbox(f);
+                    }
+                  }}
+                />
+              </div>
+            )}
+
             {/* Test Input form */}
             <div className="border-b border-inherit p-4">
               <label className={`mb-1 block text-[10px] font-extrabold uppercase tracking-wider ${muted}`}>
@@ -1700,8 +2607,8 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
                   <p className="leading-5">{testError.message}</p>
                   {testError.status === 501 && (
                     <p className="text-[11px] opacity-80 border-t border-rose-500/20 pt-2">
-                      The initial runtime executes prompt_agent nodes and knowledge_base_search tools.
-                      MCP, HTTP, conditions, sandbox agents, and autonomous function calls remain
+                      The initial runtime executes prompt_agent nodes, sandbox_agent nodes, and knowledge_base_search tools.
+                      MCP, HTTP, conditions, and autonomous function calls remain
                       unavailable until their executors are added.
                     </p>
                   )}
@@ -1740,6 +2647,170 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
                       <Markdown content={testResponse.response.message} />
                     </div>
                   </div>
+
+                  {/* Sandbox: Created Files Pills in Test Panel */}
+                  {(() => {
+                    const files: string[] = [];
+                    if (testResponse.response?.outputs) {
+                      for (const val of Object.values(testResponse.response.outputs)) {
+                        if (
+                          val &&
+                          typeof val === "object" &&
+                          "files_created" in val &&
+                          Array.isArray((val as Record<string, unknown>).files_created)
+                        ) {
+                          for (const f of (val as Record<string, unknown>).files_created as unknown[]) {
+                            if (typeof f === "string" && !files.includes(f)) files.push(f);
+                          }
+                        }
+                      }
+                    }
+                    if (testResponse.trace) {
+                      for (const step of testResponse.trace) {
+                        if (
+                          step.output &&
+                          typeof step.output === "object" &&
+                          Array.isArray((step.output as Record<string, unknown>).files_created)
+                        ) {
+                          for (const f of (step.output as Record<string, unknown>).files_created as unknown[]) {
+                            if (typeof f === "string" && !files.includes(f)) files.push(f);
+                          }
+                        }
+                      }
+                    }
+                    if (files.length === 0) return null;
+                    return (
+                      <div className={`rounded-2xl border p-3.5 text-xs space-y-2 ${card}`}>
+                        <p className="font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+                          <FiDownload /> Created Sandbox Files ({files.length})
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {files.map((fp) => {
+                            const dUrl = getSandboxDownloadUrl(fp);
+                            const name = fp.replace(/^(input|output)\//, "");
+                            return (
+                              <a
+                                key={fp}
+                                href={dUrl}
+                                download={name}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20"
+                              >
+                                <FiFileText />
+                                <span>{name}</span>
+                                <FiDownload className="text-[10px]" />
+                              </a>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Sandbox: Dataset Preview Table in Test Panel */}
+                  {(() => {
+                    let previewData: Array<Record<string, unknown>> | null = null;
+                    if (testResponse.response?.outputs) {
+                      for (const val of Object.values(testResponse.response.outputs)) {
+                        if (val && typeof val === "object" && "preview" in val) {
+                          const p = (val as Record<string, unknown>).preview;
+                          if (Array.isArray(p) && p.length > 0) {
+                            previewData = p as Array<Record<string, unknown>>;
+                            break;
+                          }
+                        }
+                      }
+                    }
+                    if (!previewData && testResponse.trace) {
+                      for (const step of testResponse.trace) {
+                        if (step.output && typeof step.output === "object" && "preview" in step.output) {
+                          const p = (step.output as Record<string, unknown>).preview;
+                          if (Array.isArray(p) && p.length > 0) {
+                            previewData = p as Array<Record<string, unknown>>;
+                            break;
+                          }
+                        }
+                      }
+                    }
+                    if (!previewData || previewData.length === 0) return null;
+                    const cols = Object.keys(previewData[0]);
+                    return (
+                      <div className={`rounded-2xl border p-3 text-xs space-y-2 ${card}`}>
+                        <div className="flex items-center justify-between font-bold text-blue-600 dark:text-blue-400">
+                          <span className="flex items-center gap-1.5">
+                            <FiTable /> Dataset Preview ({previewData.length} rows)
+                          </span>
+                        </div>
+                        <div className="max-h-52 overflow-auto rounded-xl border border-inherit">
+                          <table className="min-w-full divide-y divide-inherit text-left text-[10px]">
+                            <thead className={dark ? "bg-slate-800" : "bg-slate-100"}>
+                              <tr>
+                                {cols.map((c) => (
+                                  <th key={c} className="px-2.5 py-1.5 font-bold uppercase whitespace-nowrap text-slate-400">
+                                    {c}
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-inherit font-mono">
+                              {previewData.slice(0, 10).map((row, idx) => (
+                                <tr key={idx}>
+                                  {cols.map((c) => (
+                                    <td key={`${idx}-${c}`} className="px-2.5 py-1 whitespace-nowrap text-slate-600 dark:text-slate-300">
+                                      {row[c] !== undefined ? String(row[c]) : "—"}
+                                    </td>
+                                  ))}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Sandbox: Python Console Stdout in Test Panel */}
+                  {(() => {
+                    let outText: string | null = null;
+                    if (testResponse.response?.outputs) {
+                      for (const val of Object.values(testResponse.response.outputs)) {
+                        if (
+                          val &&
+                          typeof val === "object" &&
+                          typeof (val as Record<string, unknown>).stdout === "string" &&
+                          ((val as Record<string, unknown>).stdout as string).trim()
+                        ) {
+                          outText = ((val as Record<string, unknown>).stdout as string).trim();
+                          break;
+                        }
+                      }
+                    }
+                    if (!outText && testResponse.trace) {
+                      for (const step of testResponse.trace) {
+                        if (
+                          step.output &&
+                          typeof step.output === "object" &&
+                          typeof (step.output as Record<string, unknown>).stdout === "string" &&
+                          ((step.output as Record<string, unknown>).stdout as string).trim()
+                        ) {
+                          outText = ((step.output as Record<string, unknown>).stdout as string).trim();
+                          break;
+                        }
+                      }
+                    }
+                    if (!outText) return null;
+                    return (
+                      <div className="rounded-2xl border border-slate-700 bg-slate-950 p-3 text-xs space-y-1.5">
+                        <p className="font-bold text-amber-400 flex items-center gap-1.5 text-[11px]">
+                          <FiTerminal /> Python Stdout
+                        </p>
+                        <pre className="max-h-40 overflow-auto font-mono text-[10px] text-emerald-400/90 whitespace-pre-wrap leading-4">
+                          {outText}
+                        </pre>
+                      </div>
+                    );
+                  })()}
 
                   {/* Citations if available */}
                   {testResponse.response.citations && testResponse.response.citations.length > 0 && (

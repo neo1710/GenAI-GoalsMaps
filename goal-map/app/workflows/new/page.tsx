@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { FiArrowLeft, FiCheck, FiDatabase, FiEdit3, FiGitBranch, FiLoader, FiZap } from "react-icons/fi";
+import { FiArrowLeft, FiCheck, FiDatabase, FiEdit3, FiGitBranch, FiLoader, FiShield, FiZap } from "react-icons/fi";
 import { useSelector } from "react-redux";
 import { RootState } from "@/store";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -57,6 +57,59 @@ const GROUNDED_TEMPLATE: CreateWorkflowParams = {
   ],
 };
 
+const SANDBOX_PIPELINE_TEMPLATE: CreateWorkflowParams = {
+  name: "Python Sandbox Data Pipeline",
+  description: "Generate synthetic goal data in Python 3.12 sandbox, profile statistical distributions, and summarize key insights.",
+  status: "draft",
+  nodes: [
+    {
+      name: "Question",
+      type: "input",
+      position: { x: 60, y: 180 },
+    },
+    {
+      name: "Generate Goals Dataset",
+      type: "agent",
+      agentType: "sandbox_agent",
+      position: { x: 340, y: 180 },
+      action: "create_synthetic_csv",
+      parameters: {
+        filename: "q3_goals.csv",
+        template: "goals_and_milestones",
+        row_count: 25,
+        seed: 42,
+      },
+    },
+    {
+      name: "Profile Goals Data",
+      type: "agent",
+      agentType: "sandbox_agent",
+      position: { x: 640, y: 180 },
+      action: "analyze_csv",
+      parameters: {
+        filename: "q3_goals.csv",
+        generate_markdown_report: true,
+        top_correlations_count: 5,
+      },
+    },
+    {
+      name: "Data Scientist Agent",
+      type: "agent",
+      agentType: "prompt_agent",
+      position: { x: 940, y: 180 },
+      provider: "groq",
+      model: "llama-3.3-70b-versatile",
+      prompt:
+        "Based on the CSV dataset analysis below:\n{{Profile Goals Data.output.markdown_report}}\n\nAnswer the user's question:\n{{Question.output.message}}\n\nHighlight milestone deadlines, owner allocations, and budget risks.",
+    },
+  ],
+  edges: [
+    { from: "Question", to: "Generate Goals Dataset" },
+    { from: "Generate Goals Dataset", to: "Profile Goals Data" },
+    { from: "Profile Goals Data", to: "Data Scientist Agent" },
+  ],
+};
+
 const SIMPLE_AGENT_TEMPLATE: CreateWorkflowParams = {
   name: "AI assistant flow",
   description: "Direct reasoning workflow using a prompt agent.",
@@ -91,7 +144,7 @@ export default function NewWorkflowPage() {
   const dark = useSelector((state: RootState) => state.theme.mode === "dark");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [selectedTemplate, setSelectedTemplate] = useState<"grounded" | "simple" | "blank">("grounded");
+  const [selectedTemplate, setSelectedTemplate] = useState<"grounded" | "sandbox" | "simple" | "blank">("grounded");
   const [customName, setCustomName] = useState("");
   const [customDescription, setCustomDescription] = useState("");
 
@@ -102,6 +155,8 @@ export default function NewWorkflowPage() {
       const template =
         selectedTemplate === "grounded"
           ? GROUNDED_TEMPLATE
+          : selectedTemplate === "sandbox"
+          ? SANDBOX_PIPELINE_TEMPLATE
           : selectedTemplate === "simple"
           ? SIMPLE_AGENT_TEMPLATE
           : BLANK_DRAFT_TEMPLATE;
@@ -195,6 +250,39 @@ export default function NewWorkflowPage() {
             <p className={`mt-2 text-xs leading-5 ${muted}`}>
               Question ➔ Prompt Agent (Rewrite) ➔ Knowledge Base Search ➔ Grounded Answer. Ready to
               execute out of the box with citations.
+            </p>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSelectedTemplate("sandbox")}
+            className={`w-full rounded-2xl border p-4 text-left transition ${
+              selectedTemplate === "sandbox"
+                ? "border-emerald-500 bg-emerald-500/5 ring-2 ring-emerald-500/20"
+                : dark
+                ? "border-slate-800 hover:border-slate-700"
+                : "border-slate-200 hover:border-emerald-200"
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <span className="grid h-8 w-8 place-items-center rounded-xl bg-emerald-500/10 text-sm text-emerald-500 font-bold">
+                  <FiShield />
+                </span>
+                <span className="font-bold text-sm">Python Sandbox Data Pipeline</span>
+              </div>
+              <span
+                className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                  selectedTemplate === "sandbox"
+                    ? "bg-emerald-600 text-white"
+                    : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                }`}
+              >
+                Sandbox 🛡️
+              </span>
+            </div>
+            <p className={`mt-2 text-xs leading-5 ${muted}`}>
+              Question ➔ Synthetic Goals Generator ➔ Statistical CSV Profiler ➔ AI Data Scientist. Run Python 3.12, pandas & numpy in an isolated sandbox.
             </p>
           </button>
 

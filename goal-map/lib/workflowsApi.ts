@@ -9,6 +9,49 @@ export type WorkflowToolType =
   | "http"
   | "mcp";
 
+export type SandboxActionType =
+  | "execute_python"
+  | "create_synthetic_csv"
+  | "analyze_csv"
+  | "query_csv"
+  | "create_csv"
+  | "list_files";
+
+export type SyntheticTemplateType =
+  | "goals_and_milestones"
+  | "sales_performance"
+  | "user_analytics"
+  | "timeseries_metrics"
+  | "project_tasks";
+
+export interface SandboxNodeParameters {
+  // execute_python
+  code?: string;
+  timeout_seconds?: number;
+
+  // create_synthetic_csv
+  filename?: string;
+  template?: SyntheticTemplateType | string;
+  row_count?: number;
+  seed?: number;
+
+  // analyze_csv
+  generate_markdown_report?: boolean;
+  top_correlations_count?: number;
+
+  // query_csv
+  filter_expression?: string;
+  columns?: string[];
+  sort_by?: string;
+  ascending?: boolean;
+  limit?: number;
+  save_result_to?: string;
+
+  // create_csv
+  data?: Array<Record<string, unknown>>;
+  delimiter?: string;
+}
+
 export type WorkflowNode = {
   name: string;
   type: WorkflowNodeType;
@@ -20,6 +63,11 @@ export type WorkflowNode = {
   model?: string;
   prompt?: string;
   tools?: string[];
+
+  // Sandbox Agent fields
+  action?: SandboxActionType | string;
+  code?: string;
+  parameters?: SandboxNodeParameters;
 
   // Tool node fields
   tool?: WorkflowToolType | string;
@@ -56,7 +104,15 @@ export type Workflow = {
 
 export type WorkflowRegistry = {
   nodeTypes: { type: WorkflowNodeType; label: string; category: string }[];
-  agentTypes: { type: WorkflowAgentType | string; description?: string }[];
+  agentTypes: {
+    type: WorkflowAgentType | string;
+    description?: string;
+    actions?: {
+      action: SandboxActionType | string;
+      description?: string;
+      parameters?: Record<string, unknown>;
+    }[];
+  }[];
   toolTypes: {
     type: WorkflowToolType | string;
     kind: "built_in" | "planned" | "configured" | string;

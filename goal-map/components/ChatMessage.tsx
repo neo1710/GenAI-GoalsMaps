@@ -1,11 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useSelector } from "react-redux";
-import { FiChevronDown, FiDatabase, FiGitBranch } from "react-icons/fi";
+import toast from "react-hot-toast";
+import {
+  FiCheck,
+  FiChevronDown,
+  FiCopy,
+  FiDatabase,
+  FiDownload,
+  FiFileText,
+  FiGitBranch,
+  FiTable,
+  FiTerminal,
+} from "react-icons/fi";
 import { RootState } from "@/store";
 import type { MessageCitation } from "@/store/slices/chatSlice";
 import Markdown from "./Markdown";
+import { getSandboxDownloadUrl } from "@/lib/sandboxApi";
 
 interface ChatMessageProps {
   role: string;
@@ -14,6 +26,11 @@ interface ChatMessageProps {
   citations?: MessageCitation[];
   finalNode?: { name: string; type: string };
   workflowName?: string;
+  outputs?: Record<string, unknown>;
+  filesCreated?: string[];
+  preview?: Array<Record<string, unknown>>;
+  stdout?: string;
+  actionSummary?: string;
 }
 
 export default function ChatMessage({
@@ -23,10 +40,108 @@ export default function ChatMessage({
   citations,
   finalNode,
   workflowName,
+  outputs,
+  filesCreated,
+  preview,
+  stdout,
+  actionSummary,
 }: ChatMessageProps) {
   const isUser = role === "user";
   const theme = useSelector((state: RootState) => state.theme.mode);
+  const dark = theme === "dark";
   const [sourcesOpen, setSourcesOpen] = useState(true);
+  const [previewOpen, setPreviewOpen] = useState(true);
+  const [stdoutOpen, setStdoutOpen] = useState(true);
+  const [copiedStdout, setCopiedStdout] = useState(false);
+
+  // Collect created files from props or nested outputs
+  const allFilesCreated = useMemo(() => {
+    const list: string[] = [...(filesCreated || [])];
+    if (outputs) {
+      for (const val of Object.values(outputs)) {
+        if (
+          val &&
+          typeof val === "object" &&
+          "files_created" in val &&
+          Array.isArray((val as Record<string, unknown>).files_created)
+        ) {
+          for (const f of (val as Record<string, unknown>).files_created as unknown[]) {
+            if (typeof f === "string" && !list.includes(f)) {
+              list.push(f);
+            }
+          }
+        }
+      }
+    }
+    return list;
+  }, [filesCreated, outputs]);
+
+  // Extract preview data if not directly provided
+  const allPreview = useMemo(() => {
+    if (preview && preview.length > 0) return preview;
+    if (outputs) {
+      for (const val of Object.values(outputs)) {
+        if (
+          val &&
+          typeof val === "object" &&
+          "preview" in val &&
+          Array.isArray((val as Record<string, unknown>).preview)
+        ) {
+          const p = (val as Record<string, unknown>).preview as Array<Record<string, unknown>>;
+          if (p.length > 0) return p;
+        }
+      }
+    }
+    return null;
+  }, [preview, outputs]);
+
+  // Extract stdout if not directly provided
+  const allStdout = useMemo(() => {
+    if (stdout) return stdout;
+    if (outputs) {
+      for (const val of Object.values(outputs)) {
+        if (
+          val &&
+          typeof val === "object" &&
+          "stdout" in val &&
+          typeof (val as Record<string, unknown>).stdout === "string"
+        ) {
+          const s = ((val as Record<string, unknown>).stdout as string).trim();
+          if (s) return s;
+        }
+      }
+    }
+    return null;
+  }, [stdout, outputs]);
+
+  // Extract action summary if not directly provided
+  const allSummary = useMemo(() => {
+    if (actionSummary) return actionSummary;
+    if (outputs) {
+      for (const val of Object.values(outputs)) {
+        if (
+          val &&
+          typeof val === "object" &&
+          "summary" in val &&
+          typeof (val as Record<string, unknown>).summary === "string"
+        ) {
+          return (val as Record<string, unknown>).summary as string;
+        }
+      }
+    }
+    return null;
+  }, [actionSummary, outputs]);
+
+  // Preview table column headers
+  const previewColumns = useMemo(() => {
+    if (!allPreview || allPreview.length === 0) return [];
+    return Object.keys(allPreview[0]);
+  }, [allPreview]);
+
+  const copyToClipboard = (text: string, label = "Copied to clipboard") => {
+    navigator.clipboard.writeText(text);
+    toast.success(label);
+  };
 
   return (
     <div
@@ -46,7 +161,7 @@ export default function ChatMessage({
               ? "bg-blue-600"
               : workflowName
               ? "bg-gradient-to-br from-indigo-500 to-purple-600"
-              : theme === "dark"
+              : dark
               ? "bg-purple-500"
               : "bg-purple-600"
           }`}
@@ -55,36 +170,45 @@ export default function ChatMessage({
         </div>
 
         {/* Message Bubble container */}
-        <div className="flex-1 space-y-2">
+        <div className="flex-1 space-y-2.5 min-w-0">
           {/* Main Bubble */}
           <div
             className={`px-4 py-3 rounded-2xl transition-colors duration-200 ${
               isUser
                 ? "bg-blue-600 text-white rounded-br-none shadow-sm"
-                : theme === "dark"
+                : dark
                 ? "bg-slate-900 border border-slate-800 text-gray-100 rounded-bl-none shadow-sm"
                 : "border border-blue-100 bg-white text-gray-900 rounded-bl-none shadow-sm"
             }`}
           >
-            {/* Workflow Origin tag */}
+            {/* Workflow Origin & Final Node tag */}
             {!isUser && (workflowName || finalNode) && (
-              <div className="mb-2 flex items-center gap-2 border-b pb-2 text-[10px] font-semibold opacity-70 border-slate-200 dark:border-slate-800">
-                <span className="flex items-center gap-1 text-blue-500">
+              <div className="mb-2 flex flex-wrap items-center gap-2 border-b pb-2 text-[10px] font-semibold opacity-80 border-slate-200 dark:border-slate-800">
+                <span className="flex items-center gap-1 text-blue-500 font-bold">
                   <FiGitBranch />
                   <span>{workflowName || "Workflow"}</span>
                 </span>
                 {finalNode && (
                   <>
                     <span>·</span>
-                    <span>
-                      terminal: {finalNode.name} ({finalNode.type})
+                    <span className="text-slate-500 dark:text-slate-400">
+                      terminal: <span className="font-bold">{finalNode.name}</span> ({finalNode.type})
+                    </span>
+                  </>
+                )}
+                {allSummary && (
+                  <>
+                    <span>·</span>
+                    <span className="text-emerald-600 dark:text-emerald-400 font-medium truncate max-w-xs">
+                      {allSummary}
                     </span>
                   </>
                 )}
               </div>
             )}
 
-            <div className="text-sm leading-relaxed">
+            {/* Markdown Message Content */}
+            <div className="text-sm leading-relaxed overflow-x-auto">
               {isUser ? (
                 <p className="whitespace-pre-wrap">{content}</p>
               ) : (
@@ -93,9 +217,186 @@ export default function ChatMessage({
             </div>
           </div>
 
+          {/* Sandbox: Created Files Pills */}
+          {!isUser && allFilesCreated.length > 0 && (
+            <div
+              className={`rounded-2xl border p-3 text-xs shadow-sm ${
+                dark
+                  ? "border-emerald-500/20 bg-emerald-500/5 text-slate-200"
+                  : "border-emerald-200 bg-emerald-50/60 text-slate-800"
+              }`}
+            >
+              <div className="mb-2 flex items-center justify-between font-bold">
+                <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                  <FiDownload className="text-sm" />
+                  <span>Files Created in Sandbox ({allFilesCreated.length})</span>
+                </span>
+                <span className="text-[10px] font-mono text-slate-500">Isolated workspace</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {allFilesCreated.map((filePath) => {
+                  const downloadUrl = getSandboxDownloadUrl(filePath);
+                  const fileName = filePath.replace(/^(input|output)\//, "");
+                  const folder = filePath.startsWith("input/") ? "input" : "output";
+                  return (
+                    <div
+                      key={filePath}
+                      className={`group flex items-center gap-2 rounded-xl border px-3 py-1.5 transition ${
+                        dark
+                          ? "border-slate-700 bg-slate-800 hover:border-emerald-500/50"
+                          : "border-emerald-200 bg-white hover:border-emerald-400"
+                      }`}
+                    >
+                      <FiFileText className="text-emerald-500 text-sm shrink-0" />
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold text-xs leading-4">{fileName}</p>
+                        <span className="text-[9px] uppercase tracking-wider text-slate-400">
+                          {folder}/
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1 ml-1 border-l pl-2 border-slate-200 dark:border-slate-700">
+                        <a
+                          href={downloadUrl}
+                          download={fileName}
+                          target="_blank"
+                          rel="noreferrer"
+                          title={`Download ${fileName}`}
+                          className="rounded-lg p-1 text-slate-500 hover:bg-emerald-500/10 hover:text-emerald-500"
+                        >
+                          <FiDownload className="text-xs" />
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => copyToClipboard(filePath, `Copied path ${filePath}`)}
+                          title="Copy file path"
+                          className="rounded-lg p-1 text-slate-500 hover:bg-blue-500/10 hover:text-blue-500"
+                        >
+                          <FiCopy className="text-xs" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Sandbox: Data Preview Table */}
+          {!isUser && allPreview && allPreview.length > 0 && (
+            <div
+              className={`rounded-2xl border text-xs shadow-sm overflow-hidden ${
+                dark ? "border-slate-800 bg-slate-900" : "border-blue-100 bg-white"
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => setPreviewOpen((v) => !v)}
+                className={`flex w-full items-center justify-between p-3 font-bold transition ${
+                  dark ? "hover:bg-slate-800/60" : "hover:bg-blue-50/60"
+                }`}
+              >
+                <span className="flex items-center gap-2 text-blue-600 dark:text-blue-400">
+                  <FiTable />
+                  <span>
+                    Dataset Preview ({allPreview.length} rows · {previewColumns.length} columns)
+                  </span>
+                </span>
+                <FiChevronDown
+                  className={`text-xs transition-transform ${previewOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+
+              {previewOpen && (
+                <div className="border-t border-inherit p-3">
+                  <div className="max-h-72 overflow-auto rounded-xl border border-inherit">
+                    <table className="min-w-full divide-y divide-inherit text-left text-[11px]">
+                      <thead className={dark ? "bg-slate-800/80" : "bg-slate-100/80"}>
+                        <tr>
+                          {previewColumns.map((col) => (
+                            <th
+                              key={col}
+                              className="px-3 py-2 font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 whitespace-nowrap"
+                            >
+                              {col}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-inherit font-mono">
+                        {allPreview.map((row, rIdx) => (
+                          <tr
+                            key={rIdx}
+                            className={`transition ${
+                              dark ? "hover:bg-slate-800/40" : "hover:bg-blue-50/40"
+                            } ${rIdx % 2 === 1 ? (dark ? "bg-slate-950/30" : "bg-slate-50/40") : ""}`}
+                          >
+                            {previewColumns.map((col) => (
+                              <td
+                                key={`${rIdx}-${col}`}
+                                className="px-3 py-1.5 whitespace-nowrap text-slate-700 dark:text-slate-300"
+                              >
+                                {row[col] !== undefined && row[col] !== null
+                                  ? String(row[col])
+                                  : "—"}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Sandbox: Python Execution Console Stdout */}
+          {!isUser && allStdout && (
+            <div
+              className={`rounded-2xl border text-xs shadow-sm overflow-hidden ${
+                dark ? "border-slate-800 bg-slate-950" : "border-slate-200 bg-slate-900 text-slate-100"
+              }`}
+            >
+              <div className="flex items-center justify-between px-3.5 py-2.5 bg-slate-800/70 border-b border-slate-700/50">
+                <span className="flex items-center gap-2 font-bold text-[11px] text-amber-400">
+                  <FiTerminal />
+                  <span>Python 3.12 Sandbox Stdout</span>
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      copyToClipboard(allStdout, "Console stdout copied");
+                      setCopiedStdout(true);
+                      setTimeout(() => setCopiedStdout(false), 2000);
+                    }}
+                    className="flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-semibold text-slate-300 hover:bg-slate-700"
+                  >
+                    {copiedStdout ? <FiCheck className="text-emerald-400" /> : <FiCopy />}
+                    <span>{copiedStdout ? "Copied" : "Copy output"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStdoutOpen((v) => !v)}
+                    className="text-slate-400 hover:text-slate-200"
+                  >
+                    <FiChevronDown
+                      className={`text-xs transition-transform ${stdoutOpen ? "rotate-180" : ""}`}
+                    />
+                  </button>
+                </div>
+              </div>
+              {stdoutOpen && (
+                <pre className="max-h-56 overflow-auto p-3 font-mono text-[11px] leading-5 text-emerald-400/90 whitespace-pre-wrap">
+                  {allStdout}
+                </pre>
+              )}
+            </div>
+          )}
+
           {/* Citations / Source Cards */}
           {!isUser && citations && citations.length > 0 && (
-            <div className="rounded-2xl border border-blue-100/80 bg-blue-50/40 p-3 text-xs dark:border-slate-800 dark:bg-slate-900/60">
+            <div className="rounded-2xl border border-blue-100/80 bg-blue-50/40 p-3 text-xs dark:border-slate-800 dark:bg-slate-900/60 shadow-sm">
               <button
                 type="button"
                 onClick={() => setSourcesOpen((v) => !v)}

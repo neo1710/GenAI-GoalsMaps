@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useDispatch, useSelector } from "react-redux";
+import toast from "react-hot-toast";
 import ChatMessage from "./ChatMessage";
-import ChatInput, { ChatModel } from "./ChatInput";
+import ChatInput, { ChatModel, UploadedSandboxFile } from "./ChatInput";
 import { streamChatResponse, ChatRequestBody } from "@/lib/streamingApi";
 import {
   addMessage,
@@ -13,7 +14,8 @@ import {
 import { RootState } from "@/store";
 import type { Message } from "@/store/slices/chatSlice";
 import type { WorkflowChatRequest, WorkflowChatResponse } from "@/lib/workflowsApi";
-import { FiGitBranch, FiMessageCircle } from "react-icons/fi";
+import { uploadSandboxFile } from "@/lib/sandboxApi";
+import { FiGitBranch, FiMessageCircle, FiShield } from "react-icons/fi";
 
 interface ChatContainerProps {
   apiUrl: string;
@@ -21,6 +23,7 @@ interface ChatContainerProps {
   agent?: string;
   workflowName?: string;
   workflowOwnerId?: string;
+  hasSandboxAgent?: boolean;
 }
 
 export default function ChatContainer({
@@ -29,6 +32,7 @@ export default function ChatContainer({
   agent,
   workflowName,
   workflowOwnerId,
+  hasSandboxAgent = false,
 }: ChatContainerProps) {
   const dispatch = useDispatch();
   const messages = useSelector((state: RootState) => state.chat.messages);
@@ -43,6 +47,10 @@ export default function ChatContainer({
   const [models, setModels] = useState<ChatModel[]>([]);
   const [selectedModelId, setSelectedModelId] = useState(defaultModel);
   const [isLoadingModels, setIsLoadingModels] = useState(true);
+
+  // Sandbox file uploading state
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedSandboxFile[]>([]);
+  const [isUploadingFile, setIsUploadingFile] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -75,6 +83,33 @@ export default function ChatContainer({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamingMessage]);
+
+  const handleFileUpload = async (file: File) => {
+    setIsUploadingFile(true);
+    try {
+      const res = await uploadSandboxFile(file, "input");
+      toast.success(
+        `Uploaded "${res.filename}" (${Math.round(res.size_bytes / 1024)} KB) to sandbox workspace input/`
+      );
+      setUploadedFiles((prev) => [
+        ...prev.filter((f) => f.relative_path !== res.relative_path),
+        {
+          name: res.filename,
+          folder: res.folder,
+          relative_path: res.relative_path,
+          size_bytes: res.size_bytes,
+        },
+      ]);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to upload file to sandbox");
+    } finally {
+      setIsUploadingFile(false);
+    }
+  };
+
+  const handleRemoveUploadedFile = (relativePath: string) => {
+    setUploadedFiles((prev) => prev.filter((f) => f.relative_path !== relativePath));
+  };
 
   const handleSendMessage = useCallback(
     async (userMessage: string) => {
@@ -124,6 +159,58 @@ export default function ChatContainer({
           }
 
           const runResult: WorkflowChatResponse = await res.json();
+
+          // Extract files_created, preview, stdout, summary from outputs & trace
+          const filesCreated: string[] = [];
+          let preview: Array<Record<string, unknown>> | undefined;
+          let stdout: string | undefined;
+          let actionSummary: string | undefined;
+
+          if (runResult.response?.outputs) {
+            for (const out of Object.values(runResult.response.outputs)) {
+              if (out && typeof out === "object") {
+                const rec = out as Record<string, unknown>;
+                if (Array.isArray(rec.files_created)) {
+                  for (const f of rec.files_created) {
+                    if (typeof f === "string" && !filesCreated.includes(f)) {
+                      filesCreated.push(f);
+                    }
+                  }
+                }
+                if (Array.isArray(rec.preview) && rec.preview.length > 0 && !preview) {
+                  preview = rec.preview as Array<Record<string, unknown>>;
+                }
+                if (typeof rec.stdout === "string" && rec.stdout.trim() && !stdout) {
+                  stdout = rec.stdout.trim();
+                }
+                if (typeof rec.summary === "string" && !actionSummary) {
+                  actionSummary = rec.summary;
+                }
+              }
+            }
+          }
+
+          if (Array.isArray(runResult.trace)) {
+            for (const step of runResult.trace) {
+              if (step.output && typeof step.output === "object") {
+                const rec = step.output as Record<string, unknown>;
+                if (Array.isArray(rec.files_created)) {
+                  for (const f of rec.files_created) {
+                    if (typeof f === "string" && !filesCreated.includes(f)) {
+                      filesCreated.push(f);
+                    }
+                  }
+                }
+                if (Array.isArray(rec.preview) && rec.preview.length > 0 && !preview) {
+                  preview = rec.preview as Array<Record<string, unknown>>;
+                }
+                if (typeof rec.stdout === "string" && rec.stdout.trim() && !stdout) {
+                  stdout = rec.stdout.trim();
+                }
+              }
+            }
+          }
+
           dispatch(
             addMessage({
               role: "assistant",
@@ -131,6 +218,11 @@ export default function ChatContainer({
               citations: runResult.response.citations,
               finalNode: runResult.response.finalNode,
               workflowName,
+              outputs: runResult.response.outputs,
+              filesCreated: filesCreated.length > 0 ? filesCreated : undefined,
+              preview,
+              stdout,
+              actionSummary,
             })
           );
         } catch (error) {
@@ -229,7 +321,11 @@ export default function ChatContainer({
                     theme === "dark" ? "bg-slate-900" : "bg-blue-100"
                   }`}
                 >
-                  {workflowName ? (
+                  {hasSandboxAgent ? (
+                    <FiShield
+                      className={`w-8 h-8 ${theme === "dark" ? "text-emerald-400" : "text-emerald-600"}`}
+                    />
+                  ) : workflowName ? (
                     <FiGitBranch
                       className={`w-8 h-8 ${theme === "dark" ? "text-blue-400" : "text-blue-600"}`}
                     />
@@ -244,14 +340,20 @@ export default function ChatContainer({
                     theme === "dark" ? "text-gray-100" : "text-gray-800"
                   }`}
                 >
-                  {workflowName ? `Workflow: ${workflowName}` : "Ask your knowledge base"}
+                  {workflowName
+                    ? hasSandboxAgent
+                      ? `Python Sandbox Workflow: ${workflowName}`
+                      : `Workflow: ${workflowName}`
+                    : "Ask your knowledge base"}
                 </p>
                 <p
                   className={`max-w-md mx-auto text-sm leading-6 transition-colors duration-200 ${
                     theme === "dark" ? "text-gray-400" : "text-gray-600"
                   }`}
                 >
-                  {workflowName
+                  {hasSandboxAgent
+                    ? "This workflow connects to an isolated Python 3.12 sandbox with pandas & numpy. You can attach datasets to input/, run synthetic data generation, CSV profiling, and statistical code."
+                    : workflowName
                     ? "Messages are processed through this saved workflow graph. The server executes node instructions and resolves terminal outputs and citations."
                     : "Choose a reasoning agent or a workflow to ask questions grounded in your indexed documents."}
                 </p>
@@ -267,6 +369,11 @@ export default function ChatContainer({
                   citations={msg.citations}
                   finalNode={msg.finalNode}
                   workflowName={msg.workflowName}
+                  outputs={msg.outputs}
+                  filesCreated={msg.filesCreated}
+                  preview={msg.preview}
+                  stdout={msg.stdout}
+                  actionSummary={msg.actionSummary}
                 />
               ))}
               <div ref={messagesEndRef} />
@@ -286,6 +393,11 @@ export default function ChatContainer({
             onModelChange={setSelectedModelId}
             isLoadingModels={isLoadingModels}
             workflowName={workflowName}
+            hasSandboxAgent={hasSandboxAgent}
+            onFileUpload={handleFileUpload}
+            uploadedFiles={uploadedFiles}
+            onRemoveUploadedFile={handleRemoveUploadedFile}
+            isUploadingFile={isUploadingFile}
           />
         </div>
       </div>

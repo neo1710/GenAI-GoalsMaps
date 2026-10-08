@@ -13,6 +13,11 @@ export interface Message {
   citations?: MessageCitation[];
   finalNode?: { name: string; type: string };
   workflowName?: string;
+  outputs?: Record<string, unknown>;
+  filesCreated?: string[];
+  preview?: Array<Record<string, unknown>>;
+  stdout?: string;
+  actionSummary?: string;
 }
 
 interface ChatState {
