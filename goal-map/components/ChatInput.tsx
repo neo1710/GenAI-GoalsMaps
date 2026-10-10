@@ -142,7 +142,7 @@ export default function ChatInput({
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".csv,.txt,.json,.py,.tsv,.xlsx"
+                accept=".csv,.txt,.json,.py,.tsv,.xlsx,.xls,.docx,.doc"
                 onChange={handleFileChange}
                 className="hidden"
                 id="sandbox-chat-file-upload"
@@ -151,7 +151,7 @@ export default function ChatInput({
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isLoading || isUploadingFile}
-                title="Upload dataset to Sandbox (input/)"
+                title="Upload dataset or document to Sandbox (input/)"
                 className={`mb-0.5 grid h-11 w-11 shrink-0 place-items-center rounded-2xl border transition ${
                   isUploadingFile
                     ? "border-emerald-500 bg-emerald-500/10 text-emerald-500"

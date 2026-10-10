@@ -238,21 +238,34 @@ export default function ChatMessage({
                   const downloadUrl = getSandboxDownloadUrl(filePath);
                   const fileName = filePath.replace(/^(input|output)\//, "");
                   const folder = filePath.startsWith("input/") ? "input" : "output";
+                  const isExcel = fileName.toLowerCase().endsWith(".xlsx") || fileName.toLowerCase().endsWith(".xls");
+                  const isWord = fileName.toLowerCase().endsWith(".docx") || fileName.toLowerCase().endsWith(".doc");
+                  const fileBadge = isExcel ? "EXCEL" : isWord ? "WORD" : "CSV/DATA";
                   return (
                     <div
                       key={filePath}
                       className={`group flex items-center gap-2 rounded-xl border px-3 py-1.5 transition ${
                         dark
-                          ? "border-slate-700 bg-slate-800 hover:border-emerald-500/50"
+                          ? isExcel
+                            ? "border-emerald-700/60 bg-emerald-950/20 hover:border-emerald-500"
+                            : isWord
+                            ? "border-blue-700/60 bg-blue-950/20 hover:border-blue-500"
+                            : "border-slate-700 bg-slate-800 hover:border-emerald-500/50"
+                          : isExcel
+                          ? "border-emerald-300 bg-emerald-50/50 hover:border-emerald-500"
+                          : isWord
+                          ? "border-blue-300 bg-blue-50/50 hover:border-blue-500"
                           : "border-emerald-200 bg-white hover:border-emerald-400"
                       }`}
                     >
-                      <FiFileText className="text-emerald-500 text-sm shrink-0" />
+                      <FiFileText className={`text-sm shrink-0 ${isExcel ? "text-emerald-500" : isWord ? "text-blue-500" : "text-slate-500"}`} />
                       <div className="min-w-0">
                         <p className="truncate font-semibold text-xs leading-4">{fileName}</p>
-                        <span className="text-[9px] uppercase tracking-wider text-slate-400">
-                          {folder}/
-                        </span>
+                        <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-wider text-slate-400">
+                          <span>{folder}/</span>
+                          <span>•</span>
+                          <span className={isExcel ? "text-emerald-500 font-semibold" : isWord ? "text-blue-500 font-semibold" : ""}>{fileBadge}</span>
+                        </div>
                       </div>
                       <div className="flex items-center gap-1 ml-1 border-l pl-2 border-slate-200 dark:border-slate-700">
                         <a

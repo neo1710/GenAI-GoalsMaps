@@ -15,6 +15,14 @@ export type SandboxActionType =
   | "analyze_csv"
   | "query_csv"
   | "create_csv"
+  | "create_excel"
+  | "inspect_excel"
+  | "analyze_excel"
+  | "create_word"
+  | "inspect_word"
+  | "read_word"
+  | "extract_word_tables"
+  | "execute_skill"
   | "list_files";
 
 export type SyntheticTemplateType =
@@ -50,6 +58,15 @@ export interface SandboxNodeParameters {
   // create_csv
   data?: Array<Record<string, unknown>>;
   delimiter?: string;
+
+  // Office & Skills parameters
+  document_title?: string;
+  subtitle?: string;
+  author?: string;
+  theme?: string;
+  skill_id?: string;
+  instructions?: string;
+  sheet_name?: string;
 }
 
 export type WorkflowNode = {

@@ -1,0 +1,12 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Pytest & caches
+.pytest_cache/
+
+# Workspace generated files
+workspace/output/*
+!workspace/output/.gitkeep
+

@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, Field
 
 
@@ -190,6 +190,187 @@ class QueryCsvResponse(BaseModel):
 
 
 # -------------------------------------------------------------
+# Excel Tool Schemas
+# -------------------------------------------------------------
+
+ExcelThemeType = Literal["corporate_blue", "emerald", "slate", "violet", "amber"]
+ExcelTemplateType = Literal["kpi_dashboard", "financial_model", "project_tracker", "sales_summary"]
+
+
+class ExcelSheetSpec(BaseModel):
+    title: str = Field(..., description="Worksheet tab title")
+    columns: List[str] = Field(default_factory=list, description="Column header names")
+    rows: Optional[List[List[Any]]] = Field(None, description="2D list of row values")
+    data: Optional[List[Dict[str, Any]]] = Field(None, description="List of dictionaries representing rows")
+    header_bg_color: Optional[str] = Field(None, description="Hex color code without '#', e.g. '1E3A8A'")
+    header_text_color: Optional[str] = Field("FFFFFF", description="Hex color code without '#'")
+    column_formats: Optional[Dict[str, str]] = Field(
+        None,
+        description="Format type per column: 'currency', 'percent', 'integer', 'float', 'date', or custom code"
+    )
+    summary_row: Optional[Dict[str, str]] = Field(
+        None,
+        description="Optional aggregation formulas for columns, e.g. {'Revenue': 'SUM', 'Progress': 'AVERAGE'}"
+    )
+    column_widths: Optional[Dict[str, int]] = Field(None, description="Custom widths for columns")
+    zebra_stripes: bool = Field(default=True, description="Alternating light row backgrounds")
+
+
+class CreateExcelRequest(BaseModel):
+    filename: str = Field(..., description="Target Excel file name, e.g. 'q3_report.xlsx'")
+    document_title: Optional[str] = Field(None, description="Optional banner title placed above table on first sheet")
+    theme: Optional[ExcelThemeType] = Field("corporate_blue", description="Color palette theme")
+    sheets: Optional[List[ExcelSheetSpec]] = Field(None, description="List of worksheet specifications")
+    template: Optional[ExcelTemplateType] = Field(None, description="Predefined template if sheets not provided")
+    template_row_count: Optional[int] = Field(20, ge=1, le=1000, description="Row count for template generation")
+    instructions: Optional[str] = Field(None, description="Natural language instructions for custom generation")
+
+
+class CreateExcelResponse(BaseModel):
+    success: bool
+    filename: str
+    relative_path: str
+    absolute_path: str
+    download_url: str
+    sheets_created: List[str]
+    total_rows: int
+    file_size_bytes: int
+    previews: Dict[str, List[Dict[str, Any]]] = Field(default_factory=dict)
+    message: str
+
+
+class ExcelSheetInfo(BaseModel):
+    sheet_name: str
+    row_count: int
+    column_count: int
+    columns: List[str]
+    preview: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class ExcelInspectResponse(BaseModel):
+    success: bool
+    filename: str
+    relative_path: str
+    sheet_count: int
+    sheet_names: List[str]
+    sheets: List[ExcelSheetInfo]
+    file_size_bytes: int
+
+
+# -------------------------------------------------------------
+# Word Tool Schemas
+# -------------------------------------------------------------
+
+WordThemeType = Literal["corporate_blue", "emerald", "slate", "violet", "amber"]
+WordTemplateType = Literal["executive_summary", "goal_progress_report", "technical_spec", "project_status"]
+
+
+class WordKpiCard(BaseModel):
+    metric: str
+    value: str
+    subtitle: Optional[str] = None
+
+
+class WordTableSpec(BaseModel):
+    headers: List[str]
+    rows: List[List[Any]]
+    column_alignments: Optional[List[Literal["left", "center", "right"]]] = None
+
+
+class WordSectionSpec(BaseModel):
+    heading: Optional[str] = None
+    level: int = Field(default=1, ge=1, le=3, description="Heading level (1, 2, or 3)")
+    paragraphs: Optional[List[str]] = Field(None, description="List of paragraph text blocks")
+    bullet_points: Optional[List[str]] = Field(None, description="Unordered bullet items")
+    numbered_list: Optional[List[str]] = Field(None, description="Ordered numbered list items")
+    callout: Optional[str] = Field(None, description="Highlighted takeaway callout box")
+    kpis: Optional[List[WordKpiCard]] = Field(None, description="Side-by-side KPI metric cards")
+    table: Optional[WordTableSpec] = Field(None, description="Embedded styled table")
+
+
+class CreateWordRequest(BaseModel):
+    filename: str = Field(..., description="Target Word document name, e.g. 'Project_Status.docx'")
+    document_title: str = Field(..., description="Primary title of the document")
+    subtitle: Optional[str] = Field(None, description="Secondary subtitle or project descriptor")
+    author: Optional[str] = Field(None, description="Author or organisation name")
+    date_str: Optional[str] = Field(None, description="Date string or empty for current date")
+    theme: Optional[WordThemeType] = Field("corporate_blue", description="Visual styling palette")
+    sections: Optional[List[WordSectionSpec]] = Field(None, description="List of document sections")
+    template: Optional[WordTemplateType] = Field(None, description="Predefined template if sections not provided")
+    instructions: Optional[str] = Field(None, description="Natural language instructions for custom generation")
+
+
+class CreateWordResponse(BaseModel):
+    success: bool
+    filename: str
+    relative_path: str
+    absolute_path: str
+    download_url: str
+    word_count: int
+    section_count: int
+    table_count: int
+    file_size_bytes: int
+    markdown_summary: str
+    message: str
+
+
+class WordInspectResponse(BaseModel):
+    success: bool
+    filename: str
+    relative_path: str
+    title: str
+    author: Optional[str] = None
+    paragraph_count: int
+    word_count: int
+    table_count: int
+    headings: List[Dict[str, Any]]
+    paragraphs_preview: List[str]
+    tables: List[Dict[str, Any]]
+    markdown_content: str
+    file_size_bytes: int
+
+
+# -------------------------------------------------------------
+# Skills System Schemas
+# -------------------------------------------------------------
+
+SkillCategory = Literal["excel", "word", "data_analysis", "python", "custom"]
+
+
+class SkillDefinition(BaseModel):
+    id: str = Field(..., description="Unique slug identifier, e.g. 'excel_kpi_dashboard'")
+    name: str = Field(..., description="Human-readable name")
+    category: SkillCategory = Field(default="custom", description="Skill domain")
+    description: str = Field(..., description="Summary of capability")
+    instructions: str = Field(..., description="Step-by-step instructions executed by the agent")
+    parameters_schema: Dict[str, Any] = Field(default_factory=dict, description="Expected parameter dictionary structure")
+    output_format: str = Field(default="mixed", description="Primary output format: excel, word, csv, json, mixed")
+    is_builtin: bool = Field(default=False, description="True if core built-in skill")
+    tags: List[str] = Field(default_factory=list)
+
+
+class SkillRunRequest(BaseModel):
+    skill_id: Optional[str] = Field(None, description="Identifier of registered skill")
+    skill_definition: Optional[SkillDefinition] = Field(None, description="Inline custom skill definition if not pre-registered")
+    parameters: Dict[str, Any] = Field(default_factory=dict, description="Parameters passed into the skill")
+    stream: bool = Field(default=False, description="Whether to stream execution events via SSE")
+
+
+class SkillRunResponse(BaseModel):
+    success: bool
+    skill_id: str
+    summary: str
+    result: Any
+    files_created: List[str] = Field(default_factory=list)
+    execution_time_ms: float = 0.0
+
+
+class SkillListResponse(BaseModel):
+    skills: List[SkillDefinition]
+    total_count: int
+
+
+# -------------------------------------------------------------
 # Agent Unified Dispatch Schemas
 # -------------------------------------------------------------
 
@@ -199,13 +380,24 @@ AgentActionType = Literal[
     "analyze_csv",
     "query_csv",
     "execute_python",
-    "list_files"
+    "list_files",
+    "create_excel",
+    "inspect_excel",
+    "analyze_excel",
+    "create_word",
+    "inspect_word",
+    "read_word",
+    "extract_word_tables",
+    "execute_skill"
 ]
 
 
 class AgentActionRequest(BaseModel):
     action: AgentActionType = Field(..., description="Action to perform")
     parameters: Dict[str, Any] = Field(default_factory=dict, description="Action arguments matching the tool schema")
+    skill_id: Optional[str] = Field(None, description="Optional skill ID if action is 'execute_skill'")
+    skill_definition: Optional[SkillDefinition] = Field(None, description="Optional inline skill definition")
+    stream: bool = Field(default=False, description="Whether to stream execution events via SSE")
 
 
 class AgentActionResponse(BaseModel):
@@ -232,4 +424,3 @@ class FileListResponse(BaseModel):
     input_files: List[FileItem]
     output_files: List[FileItem]
     total_count: int
-

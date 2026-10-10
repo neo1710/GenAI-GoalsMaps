@@ -80,11 +80,26 @@ class FileManager:
 
     @classmethod
     def read_file(cls, filename: str, folder: Optional[Literal["input", "output"]] = None) -> str:
-        """Read text content from a file."""
+        """Read text content from a file (supports text, CSV, JSON, and auto-extracts from Word and Excel)."""
         target_path = cls.resolve_path(filename, folder=folder)
         if not target_path.exists():
             raise FileNotFoundError(f"File not found: {filename}")
-        return target_path.read_text(encoding="utf-8")
+
+        ext = target_path.suffix.lower()
+        if ext == ".docx":
+            from app.tools.word_tool import WordTool
+            return WordTool.read_text(target_path.name, folder=folder)
+        elif ext in (".xlsx", ".xls"):
+            import pandas as pd
+            excel_file = pd.ExcelFile(target_path)
+            lines = [f"# Excel Workbook: {target_path.name}"]
+            for sheet in excel_file.sheet_names:
+                df = excel_file.parse(sheet, nrows=50)
+                lines.append(f"\n## Sheet: {sheet} ({len(df)} rows)")
+                lines.append(df.to_string(index=False))
+            return "\n\n".join(lines)
+
+        return target_path.read_text(encoding="utf-8", errors="replace")
 
     @classmethod
     def list_files(cls) -> FileListResponse:

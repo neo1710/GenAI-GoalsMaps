@@ -9,6 +9,14 @@ export type SandboxActionType =
   | "analyze_csv"
   | "query_csv"
   | "create_csv"
+  | "create_excel"
+  | "inspect_excel"
+  | "analyze_excel"
+  | "create_word"
+  | "inspect_word"
+  | "read_word"
+  | "extract_word_tables"
+  | "execute_skill"
   | "list_files";
 
 export type SyntheticTemplateType =
@@ -146,6 +154,46 @@ export const SANDBOX_ACTIONS_INFO: Record<
     label: "Create CSV from JSON",
     icon: "📝",
     description: "Convert structured JSON record arrays into CSV files in workspace output.",
+  },
+  create_excel: {
+    label: "Create Excel Workbook",
+    icon: "📗",
+    description: "Generate styled multi-sheet Excel (.xlsx) files with formulas, themes, and KPI tables.",
+  },
+  inspect_excel: {
+    label: "Inspect Excel Workbook",
+    icon: "📑",
+    description: "Inspect sheets, row/col counts, and preview data inside Excel files.",
+  },
+  analyze_excel: {
+    label: "Analyze Excel Sheet",
+    icon: "📈",
+    description: "Perform statistical column profiling, outlier detection, and correlation analysis on Excel sheets.",
+  },
+  create_word: {
+    label: "Create Word Document",
+    icon: "📘",
+    description: "Generate structured Word (.docx) reports with KPI cards, callout boxes, and formatted tables.",
+  },
+  inspect_word: {
+    label: "Inspect Word Document",
+    icon: "🔍",
+    description: "Inspect headings, structure, paragraphs, and embedded tables from Word documents.",
+  },
+  read_word: {
+    label: "Read Word Document",
+    icon: "📄",
+    description: "Extract text, headings, and embedded tables from Word documents as clean Markdown.",
+  },
+  extract_word_tables: {
+    label: "Extract Word Tables",
+    icon: "📋",
+    description: "Extract embedded tables from Word documents into structured datasets.",
+  },
+  execute_skill: {
+    label: "Execute Agent Skill",
+    icon: "⚡",
+    description: "Run pre-built or instruction-driven skills for automated document creation, profiling, and reporting.",
   },
   list_files: {
     label: "List Workspace Files",
@@ -328,16 +376,149 @@ export async function listSandboxFiles(): Promise<SandboxFileListResponse> {
 /**
  * Checks if the Sandbox service is reachable.
  */
-export async function checkSandboxHealth(): Promise<{ status: string; workspace?: string } | null> {
+export async function checkSandboxHealth(): Promise<{ status: string; workspace?: string; capabilities?: string[] } | null> {
   try {
     const base = getSandboxBaseUrl();
     const res = await fetch(`${base}/health`, { method: "GET", signal: AbortSignal.timeout(3000) });
     if (res.ok) {
-      return (await res.json()) as { status: string; workspace?: string };
+      return (await res.json()) as { status: string; workspace?: string; capabilities?: string[] };
     }
     return null;
   } catch {
     return null;
   }
+}
+
+export interface SandboxStreamEvent {
+  event: string;
+  data: Record<string, unknown>;
+}
+
+/**
+ * Executes Python code in the sandbox with live Server-Sent Events (SSE) streaming.
+ * Yields start, stdout, stderr, file_created, and complete events.
+ */
+export async function streamSandboxExecution(
+  payload: { code: string; timeout_seconds?: number; input_files?: Record<string, string> },
+  onEvent: (event: SandboxStreamEvent) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  const base = getSandboxBaseUrl();
+  const response = await fetch(`${base}/execute/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal,
+  });
+
+  if (!response.ok || !response.body) {
+    throw new Error(`Failed to initiate streaming execution (${response.status})`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() || "";
+
+    for (const part of parts) {
+      if (!part.trim() || part.startsWith(":")) continue;
+      const lines = part.split("\n");
+      let eventType = "message";
+      let dataStr = "";
+
+      for (const line of lines) {
+        if (line.startsWith("event: ")) {
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith("data: ")) {
+          dataStr = line.slice(6).trim();
+        }
+      }
+
+      if (dataStr) {
+        try {
+          const parsed = JSON.parse(dataStr);
+          onEvent({ event: eventType, data: parsed });
+        } catch {
+          onEvent({ event: eventType, data: { message: dataStr } });
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Dispatches an action to the unified Agent runner with live SSE streaming.
+ */
+export async function streamSandboxAgent(
+  payload: { action: SandboxActionType | string; parameters?: Record<string, unknown>; skill_id?: string },
+  onEvent: (event: SandboxStreamEvent) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  const base = getSandboxBaseUrl();
+  const response = await fetch(`${base}/agent/run/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...payload, stream: true }),
+    signal,
+  });
+
+  if (!response.ok || !response.body) {
+    throw new Error(`Failed to initiate agent stream (${response.status})`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() || "";
+
+    for (const part of parts) {
+      if (!part.trim() || part.startsWith(":")) continue;
+      const lines = part.split("\n");
+      let eventType = "message";
+      let dataStr = "";
+
+      for (const line of lines) {
+        if (line.startsWith("event: ")) {
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith("data: ")) {
+          dataStr = line.slice(6).trim();
+        }
+      }
+
+      if (dataStr) {
+        try {
+          const parsed = JSON.parse(dataStr);
+          onEvent({ event: eventType, data: parsed });
+        } catch {
+          onEvent({ event: eventType, data: { message: dataStr } });
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Lists all registered skills from the sandbox skills engine.
+ */
+export async function listSandboxSkills(): Promise<Array<{ id: string; name: string; category: string; description: string; instructions: string }>> {
+  const base = getSandboxBaseUrl();
+  const response = await fetch(`${base}/skills`);
+  if (!response.ok) throw new Error("Failed to list sandbox skills");
+  const data = await response.json();
+  return data.skills || [];
 }
 
