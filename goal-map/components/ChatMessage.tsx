@@ -6,11 +6,15 @@ import toast from "react-hot-toast";
 import {
   FiCheck,
   FiChevronDown,
+  FiClock,
   FiCopy,
+  FiCpu,
   FiDatabase,
   FiDownload,
   FiFileText,
   FiGitBranch,
+  FiLoader,
+  FiPlay,
   FiTable,
   FiTerminal,
 } from "react-icons/fi";
@@ -19,7 +23,15 @@ import type { MessageCitation } from "@/store/slices/chatSlice";
 import Markdown from "./Markdown";
 import { getSandboxDownloadUrl } from "@/lib/sandboxApi";
 
-interface ChatMessageProps {
+export interface NodeProgressItem {
+  name: string;
+  type: string;
+  status: "running" | "completed" | "error" | string;
+  durationMs?: number;
+  step?: string;
+}
+
+export interface ChatMessageProps {
   role: string;
   content: string;
   isStreaming?: boolean;
@@ -31,6 +43,16 @@ interface ChatMessageProps {
   preview?: Array<Record<string, unknown>>;
   stdout?: string;
   actionSummary?: string;
+  trace?: Array<{
+    nodeName: string;
+    nodeType: string;
+    status: string;
+    durationMs: number;
+    output?: Record<string, unknown>;
+  }>;
+  streamingNode?: { name: string; type: string; step?: string; status?: string };
+  nodesProgress?: NodeProgressItem[];
+  durationMs?: number;
 }
 
 export default function ChatMessage({
@@ -45,6 +67,10 @@ export default function ChatMessage({
   preview,
   stdout,
   actionSummary,
+  trace,
+  streamingNode,
+  nodesProgress,
+  durationMs,
 }: ChatMessageProps) {
   const isUser = role === "user";
   const theme = useSelector((state: RootState) => state.theme.mode);
@@ -52,29 +78,35 @@ export default function ChatMessage({
   const [sourcesOpen, setSourcesOpen] = useState(true);
   const [previewOpen, setPreviewOpen] = useState(true);
   const [stdoutOpen, setStdoutOpen] = useState(true);
+  const [traceOpen, setTraceOpen] = useState(false);
   const [copiedStdout, setCopiedStdout] = useState(false);
 
-  // Collect created files from props or nested outputs
+
+  // Collect created files from props, outputs, or trace
   const allFilesCreated = useMemo(() => {
     const list: string[] = [...(filesCreated || [])];
-    if (outputs) {
-      for (const val of Object.values(outputs)) {
-        if (
-          val &&
-          typeof val === "object" &&
-          "files_created" in val &&
-          Array.isArray((val as Record<string, unknown>).files_created)
-        ) {
-          for (const f of (val as Record<string, unknown>).files_created as unknown[]) {
-            if (typeof f === "string" && !list.includes(f)) {
-              list.push(f);
-            }
+    const checkObj = (val: unknown) => {
+      if (
+        val &&
+        typeof val === "object" &&
+        "files_created" in val &&
+        Array.isArray((val as Record<string, unknown>).files_created)
+      ) {
+        for (const f of (val as Record<string, unknown>).files_created as unknown[]) {
+          if (typeof f === "string" && !list.includes(f)) {
+            list.push(f);
           }
         }
       }
+    };
+    if (outputs) {
+      for (const val of Object.values(outputs)) checkObj(val);
+    }
+    if (trace) {
+      for (const step of trace) checkObj(step.output);
     }
     return list;
-  }, [filesCreated, outputs]);
+  }, [filesCreated, outputs, trace]);
 
   // Extract preview data if not directly provided
   const allPreview = useMemo(() => {
@@ -92,8 +124,21 @@ export default function ChatMessage({
         }
       }
     }
+    if (trace) {
+      for (const step of trace) {
+        if (
+          step.output &&
+          typeof step.output === "object" &&
+          "preview" in step.output &&
+          Array.isArray((step.output as Record<string, unknown>).preview)
+        ) {
+          const p = (step.output as Record<string, unknown>).preview as Array<Record<string, unknown>>;
+          if (p.length > 0) return p;
+        }
+      }
+    }
     return null;
-  }, [preview, outputs]);
+  }, [preview, outputs, trace]);
 
   // Extract stdout if not directly provided
   const allStdout = useMemo(() => {
@@ -111,8 +156,21 @@ export default function ChatMessage({
         }
       }
     }
+    if (trace) {
+      for (const step of trace) {
+        if (
+          step.output &&
+          typeof step.output === "object" &&
+          "stdout" in step.output &&
+          typeof (step.output as Record<string, unknown>).stdout === "string"
+        ) {
+          const s = ((step.output as Record<string, unknown>).stdout as string).trim();
+          if (s) return s;
+        }
+      }
+    }
     return null;
-  }, [stdout, outputs]);
+  }, [stdout, outputs, trace]);
 
   // Extract action summary if not directly provided
   const allSummary = useMemo(() => {
@@ -129,8 +187,20 @@ export default function ChatMessage({
         }
       }
     }
+    if (trace) {
+      for (const step of trace) {
+        if (
+          step.output &&
+          typeof step.output === "object" &&
+          "summary" in step.output &&
+          typeof (step.output as Record<string, unknown>).summary === "string"
+        ) {
+          return (step.output as Record<string, unknown>).summary as string;
+        }
+      }
+    }
     return null;
-  }, [actionSummary, outputs]);
+  }, [actionSummary, outputs, trace]);
 
   // Preview table column headers
   const previewColumns = useMemo(() => {
@@ -196,6 +266,14 @@ export default function ChatMessage({
                     </span>
                   </>
                 )}
+                {durationMs !== undefined && durationMs > 0 && (
+                  <>
+                    <span>·</span>
+                    <span className="text-slate-400 font-mono flex items-center gap-1">
+                      <FiClock className="text-[9px]" /> {durationMs}ms
+                    </span>
+                  </>
+                )}
                 {allSummary && (
                   <>
                     <span>·</span>
@@ -207,10 +285,43 @@ export default function ChatMessage({
               </div>
             )}
 
+            {/* Live Streaming Workflow Node Progress */}
+            {!isUser && isStreaming && (streamingNode || (nodesProgress && nodesProgress.length > 0)) && (
+              <div className="mb-3 rounded-xl border border-blue-500/20 bg-blue-500/10 p-2.5 text-xs text-blue-700 dark:text-blue-300">
+                <div className="flex items-center justify-between font-bold text-[11px] mb-1">
+                  <span className="flex items-center gap-1.5">
+                    <FiLoader className="animate-spin text-blue-500 shrink-0" />
+                    <span>Executing: <strong className="font-extrabold">{streamingNode?.name || "Workflow Node"}</strong></span>
+                    {streamingNode?.type && (
+                      <span className="rounded bg-blue-500/20 px-1.5 py-0.2 font-mono text-[9px]">
+                        {streamingNode.type}
+                      </span>
+                    )}
+                  </span>
+                  {nodesProgress && nodesProgress.length > 0 && (
+                    <span className="text-[10px] text-slate-500 font-mono">
+                      Step {nodesProgress.length}
+                    </span>
+                  )}
+                </div>
+                {(streamingNode?.step || streamingNode?.status) && (
+                  <p className="text-[10px] text-slate-600 dark:text-slate-400 font-mono flex items-center gap-1">
+                    <span>↳</span>
+                    <span>{streamingNode.step || streamingNode.status}</span>
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* Markdown Message Content */}
             <div className="text-sm leading-relaxed overflow-x-auto">
               {isUser ? (
                 <p className="whitespace-pre-wrap">{content}</p>
+              ) : !content && isStreaming ? (
+                <div className="flex items-center gap-2 text-xs text-slate-400 italic py-1">
+                  <FiLoader className="animate-spin text-blue-500 text-xs shrink-0" />
+                  <span>Workflow is processing nodes...</span>
+                </div>
               ) : (
                 <Markdown content={content} isStreaming={isStreaming} />
               )}
@@ -444,6 +555,72 @@ export default function ChatMessage({
                       </p>
                     </div>
                   ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Workflow Execution Trace Accordion */}
+          {!isUser && trace && trace.length > 0 && (
+            <div
+              className={`rounded-2xl border text-xs shadow-sm overflow-hidden ${
+                dark ? "border-slate-800 bg-slate-900/60" : "border-slate-200/90 bg-white"
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => setTraceOpen((v) => !v)}
+                className={`flex w-full items-center justify-between p-3 font-bold transition ${
+                  dark ? "hover:bg-slate-800/60" : "hover:bg-blue-50/50"
+                }`}
+              >
+                <span className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
+                  <FiCpu />
+                  <span>
+                    Workflow Execution Trace ({trace.length} nodes · {durationMs ? `${durationMs}ms` : "completed"})
+                  </span>
+                </span>
+                <FiChevronDown
+                  className={`text-xs transition-transform ${traceOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+
+              {traceOpen && (
+                <div className="border-t border-inherit p-3 space-y-2">
+                  {trace.map((step, idx) => {
+                    const stepSummary =
+                      typeof step.output?.summary === "string"
+                        ? step.output.summary
+                        : typeof step.output?.message === "string"
+                        ? step.output.message.slice(0, 150)
+                        : null;
+                    return (
+                      <div
+                        key={`${step.nodeName}-${idx}`}
+                        className={`rounded-xl border p-2.5 text-[11px] ${
+                          dark ? "border-slate-800 bg-slate-950/70" : "border-slate-100 bg-slate-50/80"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between font-bold">
+                          <span className="flex items-center gap-1.5 text-slate-700 dark:text-slate-200">
+                            <FiCheck className="text-emerald-500 text-xs shrink-0" />
+                            <span>{step.nodeName}</span>
+                            <span className="font-normal opacity-60 text-[9px] font-mono">
+                              ({step.nodeType})
+                            </span>
+                          </span>
+                          <span className="text-[10px] font-mono text-slate-400">
+                            {step.durationMs}ms
+                          </span>
+                        </div>
+                        {stepSummary && (
+                          <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400 leading-4">
+                            {stepSummary}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

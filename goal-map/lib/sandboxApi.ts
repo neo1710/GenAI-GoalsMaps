@@ -12,12 +12,18 @@ export type SandboxActionType =
   | "create_excel"
   | "inspect_excel"
   | "analyze_excel"
+  | "convert_excel_to_csv"
   | "create_word"
   | "inspect_word"
   | "read_word"
   | "extract_word_tables"
+  | "run_skill"
   | "execute_skill"
+  | "list_skills"
+  | "get_skill"
+  | "read_file_raw"
   | "list_files";
+
 
 export type SyntheticTemplateType =
   | "goals_and_milestones"
@@ -170,6 +176,11 @@ export const SANDBOX_ACTIONS_INFO: Record<
     icon: "📈",
     description: "Perform statistical column profiling, outlier detection, and correlation analysis on Excel sheets.",
   },
+  convert_excel_to_csv: {
+    label: "Convert Excel to CSV",
+    icon: "🔄",
+    description: "Export an Excel sheet into a standard CSV dataset in workspace output.",
+  },
   create_word: {
     label: "Create Word Document",
     icon: "📘",
@@ -194,6 +205,26 @@ export const SANDBOX_ACTIONS_INFO: Record<
     label: "Execute Agent Skill",
     icon: "⚡",
     description: "Run pre-built or instruction-driven skills for automated document creation, profiling, and reporting.",
+  },
+  run_skill: {
+    label: "Run Agent Skill",
+    icon: "⚡",
+    description: "Execute structured skills (e.g. excel_kpi_dashboard, word_executive_report, custom instructions).",
+  },
+  list_skills: {
+    label: "List Available Skills",
+    icon: "🧰",
+    description: "Discover all installed instructional skills in the sandbox skills engine.",
+  },
+  get_skill: {
+    label: "Get Skill Details",
+    icon: "ℹ️",
+    description: "Retrieve instructions and parameters for a specific skill.",
+  },
+  read_file_raw: {
+    label: "Read File Content (Markdown)",
+    icon: "📖",
+    description: "Extract raw readable content / markdown representation from Office and text files.",
   },
   list_files: {
     label: "List Workspace Files",
@@ -521,4 +552,76 @@ export async function listSandboxSkills(): Promise<Array<{ id: string; name: str
   const data = await response.json();
   return data.skills || [];
 }
+
+/**
+ * Executes a skill with live SSE streaming from POST /genAI/sandbox/skills/run/stream
+ */
+export async function streamSandboxSkillRun(
+  payload: { skill_id: string; parameters?: Record<string, unknown>; instructions?: string },
+  onEvent: (event: SandboxStreamEvent) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  const base = getSandboxBaseUrl();
+  const response = await fetch(`${base}/skills/run/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...payload, stream: true }),
+    signal,
+  });
+
+  if (!response.ok || !response.body) {
+    throw new Error(`Failed to initiate skill stream (${response.status})`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() || "";
+
+    for (const part of parts) {
+      if (!part.trim() || part.startsWith(":")) continue;
+      const lines = part.split("\n");
+      let eventType = "message";
+      let dataStr = "";
+
+      for (const line of lines) {
+        if (line.startsWith("event: ")) {
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith("data: ")) {
+          dataStr = line.slice(6).trim();
+        }
+      }
+
+      if (dataStr) {
+        try {
+          const parsed = JSON.parse(dataStr);
+          onEvent({ event: eventType, data: parsed });
+        } catch {
+          onEvent({ event: eventType, data: { message: dataStr } });
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Extracts raw markdown/text representation from Office or text files in sandbox.
+ * GET /genAI/sandbox/files/raw/{folder}/{filename}
+ */
+export async function fetchSandboxRawFile(folder: "input" | "output", filename: string): Promise<string> {
+  const base = getSandboxBaseUrl();
+  const response = await fetch(`${base}/files/raw/${encodeURIComponent(folder)}/${encodeURIComponent(filename)}`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch raw file (${response.status})`);
+  }
+  return response.text();
+}
+
 

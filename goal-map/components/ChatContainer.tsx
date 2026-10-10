@@ -13,7 +13,13 @@ import {
 } from "@/store/slices/chatSlice";
 import { RootState } from "@/store";
 import type { Message } from "@/store/slices/chatSlice";
-import type { WorkflowChatRequest, WorkflowChatResponse } from "@/lib/workflowsApi";
+import {
+  streamWorkflowChat,
+  type WorkflowChatRequest,
+  type WorkflowChatResponse,
+  type WorkflowStreamEvent,
+  type WorkflowTraceItem,
+} from "@/lib/workflowsApi";
 import { uploadSandboxFile } from "@/lib/sandboxApi";
 import { FiGitBranch, FiMessageCircle, FiShield } from "react-icons/fi";
 
@@ -44,6 +50,23 @@ export default function ChatContainer({
   // Local state for streaming message
   const [streamingMessage, setStreamingMessage] = useState<string>("");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [streamingWorkflowNode, setStreamingWorkflowNode] = useState<{
+    name: string;
+    type: string;
+    step?: string;
+    status?: string;
+  } | undefined>(undefined);
+  const [streamingWorkflowNodesProgress, setStreamingWorkflowNodesProgress] = useState<
+    Array<{
+      name: string;
+      type: string;
+      status: "running" | "completed" | "error" | string;
+      durationMs?: number;
+      step?: string;
+    }>
+  >([]);
+  const [streamingWorkflowFilesCreated, setStreamingWorkflowFilesCreated] = useState<string[]>([]);
+  const [streamingWorkflowStdout, setStreamingWorkflowStdout] = useState<string>("");
   const [models, setModels] = useState<ChatModel[]>([]);
   const [selectedModelId, setSelectedModelId] = useState(defaultModel);
   const [isLoadingModels, setIsLoadingModels] = useState(true);
@@ -121,49 +144,141 @@ export default function ChatContainer({
       dispatch(setLoading(true));
       dispatch(setError(null));
 
-      // CASE 1: Chat with a Workflow
-      // "Pass workflowName to select workflow execution. Do not send agent at the same time;
-      // workflowName takes precedence over the legacy direct-agent behavior.
-      // Workflow streaming is not available in this initial endpoint. Do not set stream: true"
+      // CASE 1: Chat with a Workflow (Real-Time SSE Streaming)
       if (workflowName) {
+        setIsStreaming(true);
+        setStreamingMessage("");
+        setStreamingWorkflowNode(undefined);
+        setStreamingWorkflowNodesProgress([]);
+        setStreamingWorkflowFilesCreated([]);
+        setStreamingWorkflowStdout("");
+
         try {
-          const payload: WorkflowChatRequest = {
-            workflowName,
-            ...(workflowOwnerId && { workflowOwnerId }),
-            messages: [...currentMessages, newUserMessage].map((m) => ({
-              role: m.role as "user" | "assistant" | "system",
-              content: m.content,
-            })),
-            stream: false,
-          };
+          let liveContent = "";
+          let liveStdout = "";
+          const liveFiles: string[] = [];
+          const progressList: Array<{
+            name: string;
+            type: string;
+            status: "running" | "completed" | "error" | string;
+            durationMs?: number;
+            step?: string;
+          }> = [];
 
-          const res = await fetch(`${apiUrl}/genAI/chat`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          });
+          const runResult: WorkflowChatResponse = await streamWorkflowChat(
+            apiUrl,
+            {
+              workflowName,
+              ...(workflowOwnerId && { workflowOwnerId }),
+              messages: [...currentMessages, newUserMessage].map((m) => ({
+                role: m.role as "user" | "assistant" | "system",
+                content: m.content,
+              })),
+              stream: true,
+            },
+            (streamEvt: WorkflowStreamEvent) => {
+              const { event, data } = streamEvt;
+              const d = (typeof data === "object" && data !== null ? data : {}) as Record<string, unknown>;
 
-          if (!res.ok) {
-            let msg = `Workflow request failed (${res.status})`;
-            try {
-              const data = await res.json();
-              msg = data.message
-                ? Array.isArray(data.message)
-                  ? data.message.join(" · ")
-                  : data.message
-                : data.error || msg;
-            } catch {
-              msg = await res.text();
+              if (event === "workflow_start") {
+                // workflow started
+              } else if (event === "node_start") {
+                const nodeName = String(d.nodeName || "");
+                const nodeType = String(d.nodeType || "agent");
+                setStreamingWorkflowNode({ name: nodeName, type: nodeType, status: "running" });
+                const existing = progressList.find((p) => p.name === nodeName);
+                if (!existing) {
+                  progressList.push({ name: nodeName, type: nodeType, status: "running" });
+                  setStreamingWorkflowNodesProgress([...progressList]);
+                }
+              } else if (event === "token" || event === "chunk") {
+                const token =
+                  typeof d.content === "string"
+                    ? d.content
+                    : typeof d.token === "string"
+                    ? d.token
+                    : typeof d.chunk === "string"
+                    ? d.chunk
+                    : typeof d.delta === "object" &&
+                      d.delta !== null &&
+                      "content" in d.delta &&
+                      typeof (d.delta as { content?: unknown }).content === "string"
+                    ? (d.delta as { content: string }).content
+                    : typeof d.text === "string"
+                    ? d.text
+                    : typeof streamEvt.data === "string"
+                    ? streamEvt.data
+                    : "";
+                if (token) {
+                  liveContent += token;
+                  setStreamingMessage(liveContent);
+                }
+              } else if (event === "step" || event === "status" || event === "log") {
+                const stepText = String(d.step || d.status || d.message || d.log || "");
+                if (stepText) {
+                  setStreamingWorkflowNode((curr) => ({
+                    name: curr?.name || String(d.nodeName || "Node"),
+                    type: curr?.type || "sandbox_agent",
+                    step: stepText,
+                  }));
+                }
+              } else if (event === "stdout") {
+                const outText = String(d.stdout || d.message || "");
+                if (outText) {
+                  liveStdout += outText;
+                  if (!outText.endsWith("\n")) liveStdout += "\n";
+                  setStreamingWorkflowStdout(liveStdout);
+                }
+              } else if (event === "stderr") {
+                const errText = String(d.stderr || d.message || "");
+                if (errText) {
+                  liveStdout += `[stderr] ${errText}\n`;
+                  setStreamingWorkflowStdout(liveStdout);
+                }
+              } else if (event === "file_created") {
+                const f = String(d.file_path || d.filename || "");
+                if (f && !liveFiles.includes(f)) {
+                  liveFiles.push(f);
+                  setStreamingWorkflowFilesCreated([...liveFiles]);
+                }
+              } else if (event === "node_complete") {
+                const nodeName = String(d.nodeName || "");
+                const dur = Number(d.durationMs ?? 0);
+                const out = (d.output as Record<string, unknown>) || {};
+                const pItem = progressList.find((p) => p.name === nodeName);
+                if (pItem) {
+                  pItem.status = "completed";
+                  pItem.durationMs = dur;
+                  setStreamingWorkflowNodesProgress([...progressList]);
+                }
+                if (Array.isArray(out.files_created)) {
+                  for (const f of out.files_created) {
+                    if (typeof f === "string" && !liveFiles.includes(f)) {
+                      liveFiles.push(f);
+                      setStreamingWorkflowFilesCreated([...liveFiles]);
+                    }
+                  }
+                }
+                if (typeof out.stdout === "string" && out.stdout) {
+                  liveStdout += out.stdout;
+                  if (!out.stdout.endsWith("\n")) liveStdout += "\n";
+                  setStreamingWorkflowStdout(liveStdout);
+                }
+                if (!liveContent && typeof out.message === "string") {
+                  liveContent = out.message;
+                  setStreamingMessage(liveContent);
+                } else if (!liveContent && typeof out.answer === "string") {
+                  liveContent = out.answer;
+                  setStreamingMessage(liveContent);
+                }
+              }
             }
-            throw new Error(msg);
-          }
-
-          const runResult: WorkflowChatResponse = await res.json();
+          );
 
           // Extract files_created, preview, stdout, summary from outputs & trace
-          const filesCreated: string[] = [];
+          const filesCreated: string[] = [...liveFiles];
           let preview: Array<Record<string, unknown>> | undefined;
-          let stdout: string | undefined;
+          let stdout: string | undefined = liveStdout.trim() || undefined;
           let actionSummary: string | undefined;
 
           if (runResult.response?.outputs) {
@@ -207,6 +322,9 @@ export default function ChatContainer({
                 if (typeof rec.stdout === "string" && rec.stdout.trim() && !stdout) {
                   stdout = rec.stdout.trim();
                 }
+                if (typeof rec.summary === "string" && !actionSummary) {
+                  actionSummary = rec.summary;
+                }
               }
             }
           }
@@ -214,15 +332,18 @@ export default function ChatContainer({
           dispatch(
             addMessage({
               role: "assistant",
-              content: runResult.response.message,
-              citations: runResult.response.citations,
-              finalNode: runResult.response.finalNode,
+              content: runResult.response?.message || liveContent,
+              citations: runResult.response?.citations,
+              finalNode: runResult.response?.finalNode,
               workflowName,
-              outputs: runResult.response.outputs,
+              outputs: runResult.response?.outputs,
               filesCreated: filesCreated.length > 0 ? filesCreated : undefined,
               preview,
               stdout,
               actionSummary,
+              trace: runResult.trace,
+              runId: runResult.run?.runId,
+              durationMs: runResult.run?.durationMs,
             })
           );
         } catch (error) {
@@ -239,6 +360,12 @@ export default function ChatContainer({
           );
         } finally {
           dispatch(setLoading(false));
+          setIsStreaming(false);
+          setStreamingMessage("");
+          setStreamingWorkflowNode(undefined);
+          setStreamingWorkflowNodesProgress([]);
+          setStreamingWorkflowFilesCreated([]);
+          setStreamingWorkflowStdout("");
         }
         return;
       }
@@ -295,8 +422,14 @@ export default function ChatContainer({
   );
 
   const displayMessages = [...messages];
-  if (isStreaming && streamingMessage) {
-    displayMessages.push({ role: "assistant", content: streamingMessage });
+  if (isStreaming) {
+    displayMessages.push({
+      role: "assistant",
+      content: streamingMessage,
+      workflowName,
+      filesCreated: streamingWorkflowFilesCreated.length > 0 ? streamingWorkflowFilesCreated : undefined,
+      stdout: streamingWorkflowStdout || undefined,
+    });
   }
 
   return (
@@ -361,21 +494,29 @@ export default function ChatContainer({
             </div>
           ) : (
             <>
-              {displayMessages.map((msg, index) => (
-                <ChatMessage
-                  key={index}
-                  role={msg.role}
-                  content={msg.content}
-                  citations={msg.citations}
-                  finalNode={msg.finalNode}
-                  workflowName={msg.workflowName}
-                  outputs={msg.outputs}
-                  filesCreated={msg.filesCreated}
-                  preview={msg.preview}
-                  stdout={msg.stdout}
-                  actionSummary={msg.actionSummary}
-                />
-              ))}
+              {displayMessages.map((msg, index) => {
+                const isThisStreaming = isStreaming && index === displayMessages.length - 1;
+                return (
+                  <ChatMessage
+                    key={index}
+                    role={msg.role}
+                    content={msg.content}
+                    isStreaming={isThisStreaming}
+                    citations={msg.citations}
+                    finalNode={msg.finalNode}
+                    workflowName={msg.workflowName}
+                    outputs={msg.outputs}
+                    filesCreated={msg.filesCreated}
+                    preview={msg.preview}
+                    stdout={msg.stdout}
+                    actionSummary={msg.actionSummary}
+                    trace={msg.trace}
+                    streamingNode={isThisStreaming ? streamingWorkflowNode : undefined}
+                    nodesProgress={isThisStreaming ? streamingWorkflowNodesProgress : undefined}
+                    durationMs={msg.durationMs}
+                  />
+                );
+              })}
               <div ref={messagesEndRef} />
             </>
           )}

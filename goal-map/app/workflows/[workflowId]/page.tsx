@@ -66,6 +66,8 @@ import {
   WorkflowApiError,
   WorkflowChatResponse,
   workflowsApi,
+  streamWorkflowChat,
+  type WorkflowStreamEvent,
 } from "@/lib/workflowsApi";
 import type { ChatModel } from "@/components/ChatInput";
 import {
@@ -442,6 +444,26 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
   const [testError, setTestError] = useState<{ status?: number; message: string } | null>(null);
   const [activeTraceNode, setActiveTraceNode] = useState<string | null>(null);
 
+  // Live streaming states for test panel
+  const [testLiveNode, setTestLiveNode] = useState<{
+    name: string;
+    type: string;
+    step?: string;
+    status?: string;
+  } | null>(null);
+  const [testLiveProgress, setTestLiveProgress] = useState<
+    Array<{
+      name: string;
+      type: string;
+      status: "running" | "completed" | "error" | string;
+      durationMs?: number;
+      step?: string;
+    }>
+  >([]);
+  const [testLiveTokens, setTestLiveTokens] = useState<string>("");
+  const [testLiveStdout, setTestLiveStdout] = useState<string>("");
+  const [testLiveFiles, setTestLiveFiles] = useState<string[]>([]);
+
   // Sandbox workspace files & upload state
   const [sandboxFiles, setSandboxFiles] = useState<SandboxFileListResponse | null>(null);
   const [loadingFiles, setLoadingFiles] = useState(false);
@@ -489,6 +511,33 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
       ),
     [nodes]
   );
+
+  const availableSandboxActions = useMemo(() => {
+    const registryAgent = registry?.agentTypes.find((a) => a.type === "sandbox_agent");
+    const regActions = registryAgent?.actions || [];
+    const map = new Map<string, { label: string; icon: string; description: string }>();
+
+    // Pre-populate with local actions info
+    for (const [k, v] of Object.entries(SANDBOX_ACTIONS_INFO)) {
+      map.set(k, v);
+    }
+
+    // Merge or enrich from backend registry
+    for (const ra of regActions) {
+      const actName = String(ra.action);
+      const existing = map.get(actName);
+      map.set(actName, {
+        label: existing?.label || actName.replaceAll("_", " "),
+        icon: existing?.icon || "⚙️",
+        description: ra.description || existing?.description || "",
+      });
+    }
+
+    return Array.from(map.entries()).map(([actKey, actInfo]) => ({
+      action: actKey as SandboxActionType,
+      ...actInfo,
+    }));
+  }, [registry]);
 
   const { screenToFlowPosition, fitView } = useReactFlow();
   const selected = nodes.find((node) => node.id === selectedId) || null;
@@ -851,12 +900,122 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
     setTestRunning(true);
     setTestError(null);
     setTestResponse(null);
+    setTestLiveNode(null);
+    setTestLiveProgress([]);
+    setTestLiveTokens("");
+    setTestLiveStdout("");
+    setTestLiveFiles([]);
+
     try {
-      const res = await workflowsApi.runChat({
-        workflowName: workflow.name,
-        workflowOwnerId: workflow.ownerId,
-        messages: [{ role: "user", content: testQuery.trim() }],
-      });
+      let liveText = "";
+      let liveOut = "";
+      const liveF: string[] = [];
+      const prog: Array<{
+        name: string;
+        type: string;
+        status: "running" | "completed" | "error" | string;
+        durationMs?: number;
+        step?: string;
+      }> = [];
+
+      const res = await streamWorkflowChat(
+        process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ?? "",
+        {
+          workflowName: workflow.name,
+          workflowOwnerId: workflow.ownerId,
+          messages: [{ role: "user", content: testQuery.trim() }],
+          stream: true,
+        },
+        (streamEvt: WorkflowStreamEvent) => {
+          const { event, data } = streamEvt;
+          const d = (typeof data === "object" && data !== null ? data : {}) as Record<string, unknown>;
+
+          if (event === "node_start") {
+            const nodeName = String(d.nodeName || "");
+            const nodeType = String(d.nodeType || "agent");
+            setTestLiveNode({ name: nodeName, type: nodeType, status: "running" });
+            const existing = prog.find((p) => p.name === nodeName);
+            if (!existing) {
+              prog.push({ name: nodeName, type: nodeType, status: "running" });
+              setTestLiveProgress([...prog]);
+            }
+          } else if (event === "token" || event === "chunk") {
+            const token =
+              typeof d.content === "string"
+                ? d.content
+                : typeof d.token === "string"
+                ? d.token
+                : typeof d.chunk === "string"
+                ? d.chunk
+                : typeof d.delta === "object" &&
+                  d.delta !== null &&
+                  "content" in d.delta &&
+                  typeof (d.delta as { content?: unknown }).content === "string"
+                ? (d.delta as { content: string }).content
+                : typeof d.text === "string"
+                ? d.text
+                : typeof streamEvt.data === "string"
+                ? streamEvt.data
+                : "";
+            if (token) {
+              liveText += token;
+              setTestLiveTokens(liveText);
+            }
+          } else if (event === "step" || event === "status" || event === "log") {
+            const stepText = String(d.step || d.status || d.message || d.log || "");
+            if (stepText) {
+              setTestLiveNode((curr) => ({
+                name: curr?.name || String(d.nodeName || "Node"),
+                type: curr?.type || "sandbox_agent",
+                step: stepText,
+              }));
+            }
+          } else if (event === "stdout") {
+            const outText = String(d.stdout || d.message || "");
+            if (outText) {
+              liveOut += outText;
+              if (!outText.endsWith("\n")) liveOut += "\n";
+              setTestLiveStdout(liveOut);
+            }
+          } else if (event === "stderr") {
+            const errText = String(d.stderr || d.message || "");
+            if (errText) {
+              liveOut += `[stderr] ${errText}\n`;
+              setTestLiveStdout(liveOut);
+            }
+          } else if (event === "file_created") {
+            const f = String(d.file_path || d.filename || "");
+            if (f && !liveF.includes(f)) {
+              liveF.push(f);
+              setTestLiveFiles([...liveF]);
+            }
+          } else if (event === "node_complete") {
+            const nodeName = String(d.nodeName || "");
+            const dur = Number(d.durationMs ?? 0);
+            const out = (d.output as Record<string, unknown>) || {};
+            const pItem = prog.find((p) => p.name === nodeName);
+            if (pItem) {
+              pItem.status = "completed";
+              pItem.durationMs = dur;
+              setTestLiveProgress([...prog]);
+            }
+            if (Array.isArray(out.files_created)) {
+              for (const f of out.files_created) {
+                if (typeof f === "string" && !liveF.includes(f)) {
+                  liveF.push(f);
+                  setTestLiveFiles([...liveF]);
+                }
+              }
+            }
+            if (typeof out.stdout === "string" && out.stdout) {
+              liveOut += out.stdout;
+              if (!out.stdout.endsWith("\n")) liveOut += "\n";
+              setTestLiveStdout(liveOut);
+            }
+          }
+        }
+      );
+
       setTestResponse(res);
       if (res.trace.length) {
         setActiveTraceNode(res.trace[0].nodeName);
@@ -869,6 +1028,7 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
       }
     } finally {
       setTestRunning(false);
+      setTestLiveNode(null);
     }
   };
 
@@ -1307,27 +1467,40 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
                         <FiInfo /> Upstream variables:
                       </p>
                       <div className="flex flex-wrap gap-1">
-                        {upstreamNodes.map((n) => {
-                          const varName =
-                            n.data.kind === "input"
-                              ? `{{${n.data.title}.output.message}}`
-                              : n.data.kind === "tool"
-                              ? `{{${n.data.title}.output.results}}`
-                              : `{{${n.data.title}.output.answer}}`;
-                          return (
+                        {upstreamNodes.flatMap((n) => {
+                          const vars: string[] = [];
+                          if (n.data.kind === "input") {
+                            vars.push(`{{${n.data.title}.output.message}}`);
+                          } else if (n.data.kind === "tool") {
+                            vars.push(`{{${n.data.title}.output.results}}`);
+                          } else if (
+                            n.data.fields.agentType === "sandbox_agent" ||
+                            Boolean(n.data.fields.action)
+                          ) {
+                            vars.push(
+                              `{{${n.data.title}.output.summary}}`,
+                              `{{${n.data.title}.output.stdout}}`,
+                              `{{${n.data.title}.output.markdown_report}}`,
+                              `{{${n.data.title}.output.files_created}}`,
+                              `{{${n.data.title}.output.answer}}`
+                            );
+                          } else {
+                            vars.push(`{{${n.data.title}.output.answer}}`);
+                          }
+                          return vars.map((varName) => (
                             <button
-                              key={n.id}
+                              key={varName}
                               type="button"
                               onClick={() => {
                                 navigator.clipboard.writeText(varName);
                                 toast.success(`Copied ${varName} to clipboard`);
                               }}
                               title="Click to copy variable"
-                              className="rounded bg-white px-1.5 py-0.5 font-mono text-[9px] shadow-sm hover:bg-blue-100 dark:bg-slate-800 dark:hover:bg-slate-700"
+                              className="rounded bg-white px-1.5 py-0.5 font-mono text-[9px] shadow-sm hover:bg-blue-100 dark:bg-slate-800 dark:hover:bg-slate-700 text-blue-600 dark:text-blue-400"
                             >
                               {varName}
                             </button>
-                          );
+                          ));
                         })}
                       </div>
                     </div>
@@ -1484,14 +1657,14 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
                                   }}
                                   className={field}
                                 >
-                                  {Object.entries(SANDBOX_ACTIONS_INFO).map(([actKey, actInfo]) => (
-                                    <option key={actKey} value={actKey}>
-                                      {actInfo.icon} {actKey} ({actInfo.label})
+                                  {availableSandboxActions.map((actInfo) => (
+                                    <option key={actInfo.action} value={actInfo.action}>
+                                      {actInfo.icon} {actInfo.action} ({actInfo.label})
                                     </option>
                                   ))}
                                 </select>
                                 <p className={`mt-1.5 text-[10px] leading-4 ${muted}`}>
-                                  {SANDBOX_ACTIONS_INFO[selected.data.fields.action as SandboxActionType]?.description ||
+                                  {availableSandboxActions.find((a) => a.action === selected.data.fields.action)?.description ||
                                     "Select an action to execute in the sandbox."}
                                 </p>
                               </div>
@@ -2583,10 +2756,75 @@ function WorkflowCanvas({ workflowId }: { workflowId: string }) {
             {/* Test Output & Trace */}
             <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
               {testRunning && (
-                <div className="grid place-items-center py-16 text-center">
-                  <FiLoader className="animate-spin text-3xl text-blue-500 mb-3" />
-                  <p className="text-sm font-semibold">Executing workflow graph…</p>
-                  <p className={`text-xs ${muted} mt-1`}>Resolving prompt agents & search tools</p>
+                <div className="space-y-3">
+                  {/* Active running node card */}
+                  <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-3.5 text-xs text-blue-700 dark:text-blue-300">
+                    <div className="flex items-center justify-between font-bold">
+                      <span className="flex items-center gap-1.5">
+                        <FiLoader className="animate-spin text-blue-500 shrink-0" />
+                        <span>Running: <strong>{testLiveNode?.name || "Initializing workflow..."}</strong></span>
+                      </span>
+                      {testLiveNode?.type && (
+                        <span className="rounded bg-blue-500/20 px-1.5 py-0.5 font-mono text-[9px]">
+                          {testLiveNode.type}
+                        </span>
+                      )}
+                    </div>
+                    {(testLiveNode?.step || testLiveNode?.status) && (
+                      <p className="mt-1 font-mono text-[10px] text-slate-600 dark:text-slate-400">
+                        ↳ {testLiveNode.step || testLiveNode.status}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Progress steps */}
+                  {testLiveProgress.length > 0 && (
+                    <div className={`rounded-xl border p-2.5 text-[11px] space-y-1.5 ${card}`}>
+                      <p className={`text-[10px] font-bold uppercase tracking-wider ${muted}`}>
+                        Execution Progress ({testLiveProgress.length} nodes)
+                      </p>
+                      {testLiveProgress.map((p, idx) => (
+                        <div key={`${p.name}-${idx}`} className="flex items-center justify-between">
+                          <span className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
+                            {p.status === "completed" ? (
+                              <FiCheck className="text-emerald-500 text-xs shrink-0" />
+                            ) : (
+                              <FiLoader className="animate-spin text-blue-500 text-xs shrink-0" />
+                            )}
+                            <span className="font-semibold">{p.name}</span>
+                            <span className="text-[9px] opacity-60">({p.type})</span>
+                          </span>
+                          {p.durationMs !== undefined && (
+                            <span className="font-mono text-[10px] text-slate-400">{p.durationMs}ms</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Live stdout if Python was executed */}
+                  {testLiveStdout && (
+                    <div className="rounded-xl border border-slate-700 bg-slate-900 text-slate-100 p-2.5 text-xs">
+                      <p className="font-bold text-[10px] text-amber-400 mb-1 flex items-center gap-1">
+                        <FiTerminal /> Sandbox Stdout (Live)
+                      </p>
+                      <pre className="max-h-36 overflow-auto font-mono text-[10px] text-emerald-400 whitespace-pre-wrap">
+                        {testLiveStdout}
+                      </pre>
+                    </div>
+                  )}
+
+                  {/* Live tokens if LLM is answering */}
+                  {testLiveTokens && (
+                    <div className={`rounded-2xl border p-3 text-xs space-y-1 ${card}`}>
+                      <p className={`text-[10px] font-bold uppercase tracking-wider ${muted}`}>
+                        Live Response Output
+                      </p>
+                      <div className="text-xs leading-relaxed max-h-48 overflow-y-auto">
+                        <Markdown content={testLiveTokens} isStreaming={true} />
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 

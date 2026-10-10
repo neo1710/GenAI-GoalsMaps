@@ -18,6 +18,15 @@ export interface Message {
   preview?: Array<Record<string, unknown>>;
   stdout?: string;
   actionSummary?: string;
+  trace?: Array<{
+    nodeName: string;
+    nodeType: string;
+    status: string;
+    durationMs: number;
+    output?: Record<string, unknown>;
+  }>;
+  runId?: string;
+  durationMs?: number;
 }
 
 interface ChatState {

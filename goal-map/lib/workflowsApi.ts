@@ -1,214 +1,26 @@
-export type WorkflowNodeType = "input" | "agent" | "tool" | "condition" | "output";
-export type WorkflowPosition = { x: number; y: number };
+export * from "@/types/workflow";
+import type {
+  WorkflowNodeType,
+  WorkflowPosition,
+  WorkflowAgentType,
+  WorkflowToolType,
+  SandboxActionType,
+  SyntheticTemplateType,
+  SandboxNodeParameters,
+  WorkflowNode,
+  WorkflowEdge,
+  Workflow,
+  WorkflowRegistry,
+  CreateWorkflowParams,
+  UpdateWorkflowParams,
+  DeleteWorkflowResponse,
+  WorkflowChatRequest,
+  WorkflowCitation,
+  WorkflowTraceItem,
+  WorkflowChatResponse,
+  WorkflowStreamEvent,
+} from "@/types/workflow";
 
-export type WorkflowAgentType = "prompt_agent" | "function_call_agent" | "sandbox_agent";
-export type WorkflowToolType =
-  | "knowledge_base_search"
-  | "knowledge_base_document_search"
-  | "rag"
-  | "http"
-  | "mcp";
-
-export type SandboxActionType =
-  | "execute_python"
-  | "create_synthetic_csv"
-  | "analyze_csv"
-  | "query_csv"
-  | "create_csv"
-  | "create_excel"
-  | "inspect_excel"
-  | "analyze_excel"
-  | "create_word"
-  | "inspect_word"
-  | "read_word"
-  | "extract_word_tables"
-  | "execute_skill"
-  | "list_files";
-
-export type SyntheticTemplateType =
-  | "goals_and_milestones"
-  | "sales_performance"
-  | "user_analytics"
-  | "timeseries_metrics"
-  | "project_tasks";
-
-export interface SandboxNodeParameters {
-  // execute_python
-  code?: string;
-  timeout_seconds?: number;
-
-  // create_synthetic_csv
-  filename?: string;
-  template?: SyntheticTemplateType | string;
-  row_count?: number;
-  seed?: number;
-
-  // analyze_csv
-  generate_markdown_report?: boolean;
-  top_correlations_count?: number;
-
-  // query_csv
-  filter_expression?: string;
-  columns?: string[];
-  sort_by?: string;
-  ascending?: boolean;
-  limit?: number;
-  save_result_to?: string;
-
-  // create_csv
-  data?: Array<Record<string, unknown>>;
-  delimiter?: string;
-
-  // Office & Skills parameters
-  document_title?: string;
-  subtitle?: string;
-  author?: string;
-  theme?: string;
-  skill_id?: string;
-  instructions?: string;
-  sheet_name?: string;
-}
-
-export type WorkflowNode = {
-  name: string;
-  type: WorkflowNodeType;
-  position: WorkflowPosition;
-
-  // Agent node fields
-  agentType?: WorkflowAgentType | string;
-  provider?: "groq" | "mistral" | string;
-  model?: string;
-  prompt?: string;
-  tools?: string[];
-
-  // Sandbox Agent fields
-  action?: SandboxActionType | string;
-  code?: string;
-  parameters?: SandboxNodeParameters;
-
-  // Tool node fields
-  tool?: WorkflowToolType | string;
-  input?: Record<string, unknown>;
-  settings?: Record<string, unknown>;
-
-  // Condition node field
-  expression?: string;
-
-  // Output node field
-  value?: string;
-
-  [key: string]: unknown;
-};
-
-export type WorkflowEdge = {
-  from: string;
-  to: string;
-  when?: string;
-};
-
-export type Workflow = {
-  workflowId: string;
-  ownerId: string;
-  name: string;
-  description?: string;
-  status: "draft" | "published";
-  version: number;
-  nodes: WorkflowNode[];
-  edges: WorkflowEdge[];
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type WorkflowRegistry = {
-  nodeTypes: { type: WorkflowNodeType; label: string; category: string }[];
-  agentTypes: {
-    type: WorkflowAgentType | string;
-    description?: string;
-    actions?: {
-      action: SandboxActionType | string;
-      description?: string;
-      parameters?: Record<string, unknown>;
-    }[];
-  }[];
-  toolTypes: {
-    type: WorkflowToolType | string;
-    kind: "built_in" | "planned" | "configured" | string;
-    description?: string;
-  }[];
-};
-
-export interface CreateWorkflowParams {
-  name: string;
-  ownerId?: string;
-  description?: string;
-  status?: "draft" | "published";
-  version?: number;
-  nodes?: WorkflowNode[];
-  edges?: WorkflowEdge[];
-}
-
-export type NewWorkflow = CreateWorkflowParams;
-
-export interface UpdateWorkflowParams {
-  version?: number | string;
-  name?: string;
-  description?: string;
-  status?: Workflow["status"];
-  nodes?: WorkflowNode[];
-  edges?: WorkflowEdge[];
-}
-
-export type WorkflowUpdate = UpdateWorkflowParams;
-
-export interface DeleteWorkflowResponse {
-  message: string;
-  workflowId: string;
-  deletedWorkflow?: Workflow;
-}
-
-export type WorkflowChatRequest = {
-  workflowName: string;
-  workflowOwnerId?: string;
-  messages: Array<{ role: "user" | "assistant" | "system"; content: string }>;
-  stream?: false;
-};
-
-export type WorkflowCitation = {
-  documentId: string;
-  title?: string;
-  excerpt: string;
-  score: number;
-};
-
-export type WorkflowTraceItem = {
-  nodeName: string;
-  nodeType: WorkflowNodeType;
-  status: "completed" | string;
-  durationMs: number;
-  output: Record<string, unknown>;
-};
-
-export type WorkflowChatResponse = {
-  workflow: {
-    workflowId: string;
-    name: string;
-    version: number;
-  };
-  run: {
-    runId: string;
-    status: "completed" | string;
-    startedAt: string;
-    completedAt: string;
-    durationMs: number;
-  };
-  response: {
-    message: string;
-    finalNode: { name: string; type: string };
-    outputs: Record<string, unknown>;
-    citations: WorkflowCitation[];
-  };
-  trace: WorkflowTraceItem[];
-};
 
 const API = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ?? "";
 export const DEFAULT_OWNER_ID =
@@ -435,4 +247,211 @@ export const workflowsApi = {
         stream: false,
       }),
     }),
+
+  runChatStream: async (
+    payload: WorkflowChatRequest,
+    onEvent: (event: WorkflowStreamEvent) => void,
+    signal?: AbortSignal
+  ): Promise<WorkflowChatResponse> =>
+    streamWorkflowChat(API, payload, onEvent, signal),
 };
+
+/**
+ * Executes a workflow with real-time Server-Sent Events (SSE) streaming.
+ * Handles node-by-node live events:
+ * - workflow_start: metadata and runId
+ * - node_start: nodeName and nodeType
+ * - token / chunk: LLM response tokens
+ * - status, step, stdout, stderr, file_created, log: Sandbox agent real-time updates
+ * - node_complete: node finish with output and duration
+ * - workflow_complete: final payload with response, trace, citations
+ * - data: [DONE]: End-of-stream signal
+ */
+export async function streamWorkflowChat(
+  apiUrl: string,
+  requestBody: WorkflowChatRequest,
+  onEvent: (event: WorkflowStreamEvent) => void,
+  signal?: AbortSignal
+): Promise<WorkflowChatResponse> {
+  const base = apiUrl.replace(/\/$/, "");
+  const response = await fetch(`${base}/genAI/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+    },
+    body: JSON.stringify({
+      ...requestBody,
+      stream: true,
+    }),
+    signal,
+  });
+
+  if (!response.ok) {
+    let msg = `Workflow streaming request failed (${response.status})`;
+    try {
+      const err = await response.json();
+      msg = err.message
+        ? Array.isArray(err.message)
+          ? err.message.join(" · ")
+          : err.message
+        : err.error || msg;
+    } catch {
+      try {
+        const txt = await response.text();
+        if (txt) msg = txt;
+      } catch {}
+    }
+    throw new WorkflowApiError(msg, response.status);
+  }
+
+  if (!response.body) {
+    throw new WorkflowApiError("Workflow stream response body is null", response.status);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+
+  let finalResponse: WorkflowChatResponse | null = null;
+  const accumulatedTrace: WorkflowTraceItem[] = [];
+  const accumulatedOutputs: Record<string, unknown> = {};
+  let accumulatedMessage = "";
+  let lastNode: { name: string; type: string } = { name: "", type: "" };
+  let workflowMeta = { workflowId: "", name: requestBody.workflowName, version: 1 };
+  let runMeta = { runId: "", status: "completed", durationMs: 0, startedAt: "", completedAt: "" };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() || "";
+
+      for (const part of parts) {
+        if (!part.trim() || part.startsWith(":")) continue;
+
+        const lines = part.split("\n");
+        let eventType = "";
+        let dataStr = "";
+
+        for (const line of lines) {
+          if (line.startsWith("event: ")) {
+            eventType = line.slice(7).trim();
+          } else if (line.startsWith("data: ")) {
+            const val = line.slice(6).trim();
+            dataStr = dataStr ? `${dataStr}\n${val}` : val;
+          }
+        }
+
+        if (dataStr === "[DONE]") {
+          continue;
+        }
+
+        if (dataStr) {
+          let parsedData: any = dataStr;
+          try {
+            parsedData = JSON.parse(dataStr);
+          } catch {
+            // Keep raw string if non-JSON
+          }
+
+          // If no event: header was supplied, detect event type from payload
+          if (!eventType) {
+            if (
+              parsedData?.choices ||
+              parsedData?.delta ||
+              typeof parsedData?.token === "string" ||
+              typeof parsedData?.chunk === "string"
+            ) {
+              eventType = "token";
+            } else if (parsedData?.workflow && parsedData?.run && parsedData?.response) {
+              eventType = "workflow_complete";
+            } else if (parsedData?.nodeName && parsedData?.nodeType && parsedData?.output) {
+              eventType = "node_complete";
+            } else if (parsedData?.nodeName && parsedData?.nodeType) {
+              eventType = "node_start";
+            } else {
+              eventType = "message";
+            }
+          }
+
+          // Process state tracking
+          if (eventType === "workflow_start") {
+            if (parsedData?.workflow) workflowMeta = { ...workflowMeta, ...parsedData.workflow };
+            if (parsedData?.run) runMeta = { ...runMeta, ...parsedData.run };
+          } else if (eventType === "node_start") {
+            if (parsedData?.nodeName) {
+              lastNode = { name: parsedData.nodeName, type: parsedData.nodeType || "agent" };
+            }
+          } else if (eventType === "token" || eventType === "chunk") {
+            const tokenText =
+              parsedData?.content ??
+              parsedData?.token ??
+              parsedData?.chunk ??
+              parsedData?.delta?.content ??
+              parsedData?.choices?.[0]?.delta?.content ??
+              parsedData?.choices?.[0]?.text ??
+              (typeof parsedData === "string" ? parsedData : "");
+            if (tokenText) {
+              accumulatedMessage += tokenText;
+            }
+          } else if (eventType === "node_complete") {
+            if (parsedData?.nodeName) {
+              lastNode = { name: parsedData.nodeName, type: parsedData.nodeType || "agent" };
+              accumulatedTrace.push({
+                nodeName: parsedData.nodeName,
+                nodeType: parsedData.nodeType || "agent",
+                status: parsedData.status || "completed",
+                durationMs: Number(parsedData.durationMs ?? 0),
+                output: (parsedData.output as Record<string, unknown>) || {},
+              });
+              if (parsedData.output) {
+                accumulatedOutputs[parsedData.nodeName] = parsedData.output;
+                // If output contains message or answer and accumulatedMessage is empty, grab it
+                if (!accumulatedMessage && typeof parsedData.output.message === "string") {
+                  accumulatedMessage = parsedData.output.message;
+                } else if (!accumulatedMessage && typeof parsedData.output.answer === "string") {
+                  accumulatedMessage = parsedData.output.answer;
+                }
+              }
+            }
+          } else if (eventType === "workflow_complete") {
+            finalResponse = parsedData as WorkflowChatResponse;
+          }
+
+          onEvent({ event: eventType, data: parsedData });
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (finalResponse) {
+    return finalResponse;
+  }
+
+  // Fallback synthesized response if server closed connection cleanly without explicit workflow_complete
+  return {
+    workflow: workflowMeta,
+    run: {
+      ...runMeta,
+      runId: runMeta.runId || `run-${Date.now()}`,
+      status: "completed",
+      startedAt: runMeta.startedAt || new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      durationMs: runMeta.durationMs || 0,
+    },
+    response: {
+      message: accumulatedMessage,
+      finalNode: lastNode.name ? lastNode : { name: "Workflow", type: "agent" },
+      outputs: accumulatedOutputs,
+      citations: [],
+    },
+    trace: accumulatedTrace,
+  };
+}
+
